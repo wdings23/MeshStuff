@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>16.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{4c04e02b-5b94-48fc-b3ff-3d85509de07a}</ProjectGuid>
+    <RootNamespace>MeshStuff</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v142</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\CUDA 12.0.props" />
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <LinkIncremental>true</LinkIncremental>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>D:\test\DirectXMesh\DirectXMesh;D:\test\DirectXMesh\Utilities;D:\test\MeshStuff\externals;D:\test\MeshStuff\externals\tinyobjloader;D:\test\MeshStuff\externals\METIS\include;D:\test\MeshStuff\externals\tinyexr;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>D:\test\DirectXMesh\build-project\bin\CMake\Debug\DirectXMesh.lib;D:\test\MeshStuff\externals\METIS\lib\metis.lib;dbghelp.lib;cudart.lib;cuda.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.0\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
+      <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>D:\test\DirectXMesh\DirectXMesh;D:\test\DirectXMesh\Utilities;D:\test\MeshStuff\externals;D:\test\MeshStuff\externals\tinyobjloader;D:\test\MeshStuff\externals\METIS\include;D:\test\MeshStuff\externals\tinyexr;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>D:\test\DirectXMesh\build-project\bin\CMake\Debug\DirectXMesh.lib;D:\test\MeshStuff\externals\METIS\lib\metis.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="barycentric.cpp" />
+    <ClCompile Include="Camera.cpp" />
+    <ClCompile Include="externals\tinyexr\miniz.c" />
+    <ClCompile Include="join_operations.cpp" />
+    <ClCompile Include="LogPrint.cpp" />
+    <ClCompile Include="mat4.cpp" />
+    <ClCompile Include="MeshStuff.cpp" />
+    <ClCompile Include="move_operations.cpp" />
+    <ClCompile Include="obj_helper.cpp" />
+    <ClCompile Include="quaternion.cpp" />
+    <ClCompile Include="rasterizer.cpp" />
+    <CudaCompile Include="test.cu" />
+    <ClCompile Include="split_operations.cpp" />
+    <ClCompile Include="test_flip.cpp" />
+    <ClCompile Include="test_raster.cpp" />
+    <ClCompile Include="utils.cpp" />
+    <ClCompile Include="vec.cpp" />
+    <ClCompile Include="wtfassert.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="barycentric.h" />
+    <ClInclude Include="Camera.h" />
+    <ClInclude Include="externals\METIS\include\metis.h" />
+    <ClInclude Include="externals\tinyexr\miniz.h" />
+    <ClInclude Include="externals\tinyexr\tinyexr.h" />
+    <ClInclude Include="externals\tinyobjloader\tiny_obj_loader.h" />
+    <ClInclude Include="Header.h" />
+    <ClInclude Include="join_operations.h" />
+    <ClInclude Include="LogPrint.h" />
+    <ClInclude Include="mat4.h" />
+    <ClInclude Include="mesh_cluster.h" />
+    <ClInclude Include="move_operations.h" />
+    <ClInclude Include="obj_helper.h" />
+    <ClInclude Include="quaternion.h" />
+    <ClInclude Include="rasterizer.h" />
+    <ClInclude Include="split_operations.h" />
+    <ClInclude Include="stb_image.h" />
+    <ClInclude Include="stb_image_write.h" />
+    <ClInclude Include="test.h" />
+    <ClInclude Include="test_raster.h" />
+    <ClInclude Include="utils.h" />
+    <ClInclude Include="vec.h" />
+    <ClInclude Include="wtfassert.h" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\CUDA 12.0.targets" />
+  </ImportGroup>
+</Project>
