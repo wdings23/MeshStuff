@@ -6,6 +6,7 @@
 
 #define MAX_BOUNDARY_VERTICES_PER_CLUSTER_GROUP       3000
 
+#define WORKGROUP_SIZE 64
 
 /*
 **
@@ -216,7 +217,7 @@ void checkClusterGroupBoundaryVertices2(
 {
     uint32_t iClusterGroup = 0;
     uint32_t iTri = 0;
-    uint32_t iThreadIndex = blockIdx.x * 512 + threadIdx.x;
+    uint32_t iThreadIndex = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
     getTriangleIndexFromThreadIndex(
         &iClusterGroup,
         &iTri,
@@ -343,9 +344,10 @@ void checkClusterAdjacency(
     float* afTotalClusterVertexPositionComponents,
     uint32_t* aiNumVertexPositionComponents,
     uint32_t* aiClusterVertexPositionComponentOffsets,
-    uint32_t iNumTotalClusters)
+    uint32_t iNumTotalClusters,
+    bool bOnlyEdgeAdjacent)
 {
-    uint32_t iCluster = blockIdx.x * 512 + threadIdx.x;
+    uint32_t iCluster = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
     if(iCluster >= iNumTotalClusters)
     {
         return;
@@ -382,14 +384,18 @@ void checkClusterAdjacency(
                 float fDiffZ = fZ - fCheckZ;
 
                 float fLength = fDiffX * fDiffX + fDiffY * fDiffY + fDiffZ * fDiffZ;
-                if(fLength <= 1.0e-5f)
+                if(fLength <= 1.0e-8f)
                 {
-                    ++iNumAdjacentVertices;
-                    if(iNumAdjacentVertices >= 2)
+                    if(bOnlyEdgeAdjacent && iNumAdjacentVertices >= 2)
                     {
                         break;
                     }
-                    //break;
+                    else
+                    {
+                        ++iNumAdjacentVertices;
+                        break;
+                    }
+                    
                 }
             }
         }
@@ -440,7 +446,7 @@ void checkClusterGroupAdjacency(
     uint32_t iNumTotalVertexIndices,
     uint32_t iNumTotalClusterGroups)
 {
-    uint32_t iTotalVertexIndex = blockIdx.x * 512 + threadIdx.x;
+    uint32_t iTotalVertexIndex = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
     if(iTotalVertexIndex >= iNumTotalVertexIndices / 3)
     {
         return;
@@ -454,9 +460,21 @@ void checkClusterGroupAdjacency(
         aiNumVertexPositionComponents,
         iNumTotalClusterGroups);
 
+if(iClusterGroup == 385 && iVertComponent >= 870 * 3)
+{
+    getClusterGroupAndVertexIndex(
+        &iClusterGroup,
+        &iVertComponent,
+        iTotalVertexIndex,
+        aiNumVertexPositionComponents,
+        iNumTotalClusterGroups);
+
+    printf("wtf\n");
+}
+
     uint32_t iClusterGroupVertexPositionComponentOffset = aiClusterGroupVertexPositionComponentOffsets[iClusterGroup];
     float* aClusterVertexPositionComponents = &afTotalClusterGroupVertexPositionComponents[iClusterGroupVertexPositionComponentOffset];
-    uint32_t iNumVertexPositionComponents = aiNumVertexPositionComponents[iClusterGroup];
+//    uint32_t iNumVertexPositionComponents = aiNumVertexPositionComponents[iClusterGroup];
 
     float fX = aClusterVertexPositionComponents[iVertComponent];
     float fY = aClusterVertexPositionComponents[iVertComponent + 1];
@@ -469,7 +487,6 @@ void checkClusterGroupAdjacency(
             continue;
         }
 
-        uint32_t iNumAdjacentVertices = 0;
         uint32_t iCheckClusterGroupVertexPositionComponentOffset = aiClusterGroupVertexPositionComponentOffsets[iCheckClusterGroup];
         float* aCheckClusterVertexPositionComponents = &afTotalClusterGroupVertexPositionComponents[iCheckClusterGroupVertexPositionComponentOffset];
         uint32_t iNumCheckVertexPositionComponents = aiNumVertexPositionComponents[iCheckClusterGroup];
@@ -485,9 +502,18 @@ void checkClusterGroupAdjacency(
             float fDiffZ = fZ - fCheckZ;
 
             float fLength = fDiffX * fDiffX + fDiffY * fDiffY + fDiffZ * fDiffZ;
-            if(fLength <= 1.0e-8f)
+            if(fLength <= 1.0e-10f)
             {
                 uint32_t iArrayIndex = atomicAdd(&aiNumAdjacentClusterGroupVertices[iClusterGroup], 1);
+if(iArrayIndex >= MAX_BOUNDARY_VERTICES_PER_CLUSTER_GROUP)
+{
+    printf("wtf\n");
+}
+if(iClusterGroup == 385)
+{
+    printf("debug\n");
+}
+
                 uint32_t iIndex = iClusterGroup * MAX_BOUNDARY_VERTICES_PER_CLUSTER_GROUP + iArrayIndex;
                 aiAdjacentClusterGroupVertexIndices[iIndex] = iVertComponent / 3;
             }
@@ -524,7 +550,7 @@ void computeEdgeCollapseInfo(
     uint32_t iNumClusterGroupNonBoundaryVertices,
     uint32_t iNumEdges)
 {
-    uint32_t iEdge = blockIdx.x * 512 + threadIdx.x;
+    uint32_t iEdge = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
     if(iEdge >= iNumEdges)
     {
         return;
@@ -583,7 +609,7 @@ void computeEdgeCollapseInfo(
     float fTotalNormalPlaneAngles1 = afVertexNormalPlaneAngles[iEdgePos1];
 
     // feature value
-    float const kfFeatureMult = 1.0f;
+//    float const kfFeatureMult = 1.0f;
     float fDiffX = afVertexPositionComponents[iEdgePos1 * 3] - afVertexPositionComponents[iEdgePos0 * 3];
     float fDiffY = afVertexPositionComponents[iEdgePos1 * 3 + 1] - afVertexPositionComponents[iEdgePos0 * 3 + 1];
     float fDiffZ = afVertexPositionComponents[iEdgePos1 * 3 + 2] - afVertexPositionComponents[iEdgePos0 * 3 + 2];
@@ -746,14 +772,14 @@ void computeQuadrics(
     uint32_t iNumVertices,
     uint32_t iNumTriangleIndices)
 {
-    uint32_t iVertex = blockIdx.x * 512 + threadIdx.x;
+    uint32_t iVertex = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
     if(iVertex >= iNumVertices)
     {
         return;
     }
 
-    uint32_t iVertexPositionComponentIndex = iVertex * 3;
-    uint32_t iQuadricComponentIndex = iVertex * 16;
+//    uint32_t iVertexPositionComponentIndex = iVertex * 3;
+//    uint32_t iQuadricComponentIndex = iVertex * 16;
 
     float fAdjacentCount = 0.0f;
     float afTotalQuadricMatrix[16] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
@@ -935,7 +961,7 @@ void computeAverageVertexNormals(
     uint32_t iNumVertices,
     uint32_t iNumTriangleIndices)
 {
-    uint32_t iVertex = blockIdx.x * 512 + threadIdx.x;
+    uint32_t iVertex = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
     if(iVertex >= iNumVertices)
     {
         return;
@@ -945,7 +971,7 @@ void computeAverageVertexNormals(
 
     float afAverageNormal[3] = { 0.0f, 0.0f, 0.0f };
     float afTotalQuadricMatrix[16] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,  0.0f, 0.0f, 0.0f, 0.0f,  0.0f, 0.0f, 0.0f, 0.0f };
-    uint32_t iNumPlanes = 0;
+//    uint32_t iNumPlanes = 0;
     for(uint32_t iTri = 0; iTri < iNumTriangleIndices; iTri += 3)
     {
         uint32_t iV0 = aiTriangleVertexPositionIndices[iTri];
@@ -1088,7 +1114,7 @@ void computeTotalNormalPlaneAngles(
     uint32_t* aiNumVertexPlanes,
     uint32_t iNumVertices)
 {
-    uint32_t iVertex = blockIdx.x * 512 + threadIdx.x;
+    uint32_t iVertex = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
     if(iVertex >= iNumVertices)
     {
         return;
@@ -1128,7 +1154,7 @@ void getMatchingTriangleNormalAndUV(
     uint32_t iNumEdges,
     uint32_t iNumTriangleVertexPositionIndices)
 {
-    uint32_t iEdge = blockIdx.x * 512 + threadIdx.x;
+    uint32_t iEdge = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
     if(iEdge >= iNumEdges)
     {
         return;
@@ -1140,7 +1166,8 @@ void getMatchingTriangleNormalAndUV(
     uint32_t iEdgePos1 = aiEdges[iEdgeComponent + 1];
 
     uint32_t iNorm0 = UINT32_MAX, iNorm1 = UINT32_MAX;
-    uint32_t iUV0 = UINT32_MAX, iUV1 = UINT32_MAX;
+    uint32_t iUV0 = UINT32_MAX;
+    uint32_t iUV1 = UINT32_MAX;
     {
         uint32_t iMatchingTri = 0;
         uint32_t aiTriIndices[3] = { UINT32_MAX, UINT32_MAX, UINT32_MAX };
@@ -1186,7 +1213,7 @@ void getMatchingTriangleNormalAndUV(
         aiRetNormalIndices[iEdgeComponent + 1] = iNorm1;
 
         aiRetUVIndices[iEdgeComponent] = iUV0;
-        aiRetUVIndices[iEdgeComponent + 1] = iUV0;
+        aiRetUVIndices[iEdgeComponent + 1] = iUV1;
     }
 }
 
@@ -1202,7 +1229,7 @@ void getShortestVertexDistances(
     uint32_t iNumVertexPositions0,
     uint32_t iNumVertexPositions1)
 {
-    uint32_t iVertex = blockIdx.x * 512 + threadIdx.x;
+    uint32_t iVertex = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
     if(iVertex >= iNumVertexPositions0)
     {
         return;
@@ -1250,7 +1277,7 @@ void buildClusterEdgeAdjacency(
     uint32_t* paiDistanceSortedCluster,
     uint32_t iNumClusters)
 {
-    uint32_t iCluster = blockIdx.x * 512 + threadIdx.x;
+    uint32_t iCluster = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
     if(iCluster >= iNumClusters)
     {
         return;
@@ -1264,7 +1291,7 @@ void buildClusterEdgeAdjacency(
     uint32_t iNumTri = paiNumVertexPositionIndices[iCluster];
     for(uint32_t iTri = 0; iTri < iNumTri; iTri += 3)
     {
-        uint32_t iTriComponent = iVertexPositionIndexOffset + iTri * 3;
+//        uint32_t iTriComponent = iVertexPositionIndexOffset + iTri * 3;
         //for(uint32_t iCheckCluster = iCluster + 1; iCheckCluster < iNumClusters; iCheckCluster++)
 
         for(uint32_t iCheckCluster = 0; iCheckCluster < 10; iCheckCluster++)
@@ -1282,9 +1309,9 @@ void buildClusterEdgeAdjacency(
             for(uint32_t iCheckTri = 0; iCheckTri < iNumCheckTri; iCheckTri += 3)
             {
                 // check same positions for the triangles
-                uint32_t iCheckTriComponent = iCheckTri * 3;
-                uint32_t aiSamePos[3] = { UINT32_MAX, UINT32_MAX, UINT32_MAX };
-                uint32_t aiPos[3] = { UINT32_MAX, UINT32_MAX, UINT32_MAX };
+//                uint32_t iCheckTriComponent = iCheckTri * 3;
+                //uint32_t aiSamePos[3];
+                //uint32_t aiPos[3];
                 uint32_t iNumSamePos = 0;
                 for(uint32_t i = 0; i < 3; i++)
                 {
@@ -1314,8 +1341,8 @@ void buildClusterEdgeAdjacency(
                         float fLength = _length(fX - fCheckX, fY - fCheckY, fZ - fCheckZ);
                         if(fLength <= 1.0e-7f)
                         {
-                            aiPos[i] = iPos + i;
-                            aiSamePos[i] = iCheckPos + j;
+                            //aiPos[i] = iPos + i;
+                            //aiSamePos[i] = iCheckPos + j;
                             ++iNumSamePos;
                         }
                     }
@@ -1364,7 +1391,7 @@ void getClusterBounds(
     uint32_t* paiNumVertexPositionComponents,
     uint32_t iNumClusters)
 {
-    uint32_t iCluster = blockIdx.x * 512 + threadIdx.x;
+    uint32_t iCluster = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
     if(iCluster >= iNumClusters)
     {
         return;
@@ -1414,7 +1441,7 @@ void getClusterDistances(
     float* pafClusterCenters,
     uint32_t iNumClusters)
 {
-    uint32_t iCluster = blockIdx.x * 512 + threadIdx.x;
+    uint32_t iCluster = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
     if(iCluster >= iNumClusters)
     {
         return;
@@ -1441,6 +1468,289 @@ void getClusterDistances(
     }
 }
 
+#include "float3_lib.cuh"
+
+/*
+**
+*/
+__global__
+void projectVertices(
+    float* afRetProjectedPositions,
+    float* afTriangleVertexPositions0,
+    float* afTriangleVertexPositions1,
+    float* afIntersectInfo,
+    uint32_t iNumVertices0,
+    uint32_t iNumVertices1)
+{
+    uint32_t iNumTriangles = iNumVertices0 / 3;
+    uint32_t iTriangle = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
+    if(iTriangle >= iNumTriangles)
+    {
+        return;
+    }
+
+    float3 pos0 = make_float3(
+        afTriangleVertexPositions0[iTriangle * 9], 
+        afTriangleVertexPositions0[iTriangle * 9 + 1], 
+        afTriangleVertexPositions0[iTriangle * 9 + 2]);
+    float3 pos1 = make_float3(
+        afTriangleVertexPositions0[iTriangle * 9 + 3], 
+        afTriangleVertexPositions0[iTriangle * 9 + 4], 
+        afTriangleVertexPositions0[iTriangle * 9 + 5]);
+    float3 pos2 = make_float3(
+        afTriangleVertexPositions0[iTriangle * 9 + 6], 
+        afTriangleVertexPositions0[iTriangle * 9 + 7], 
+        afTriangleVertexPositions0[iTriangle * 9 + 8]);
+    
+    float3 diff0 = normalize(pos2 - pos0);
+    float3 diff1 = normalize(pos1 - pos0);
+
+    float3 faceNormal = cross(diff0, diff1);
+
+    uint32_t iNumCheckTriangles = iNumVertices1 / 3;
+    for(uint32_t i = 0; i < 3; i++)
+    {
+        float3 ret = make_float3(FLT_MAX, FLT_MAX, FLT_MAX);
+
+        uint32_t iTriangleVertexIndex = iTriangle * 9 + i * 3;
+        float3 pos = make_float3(
+            afTriangleVertexPositions0[iTriangleVertexIndex],
+            afTriangleVertexPositions0[iTriangleVertexIndex + 1],
+            afTriangleVertexPositions0[iTriangleVertexIndex + 2]);
+        
+        float fT = FLT_MAX;
+        float fIntersectTriangle = FLT_MAX;
+        for(uint32_t iCheckTriangle = 0; iCheckTriangle < iNumCheckTriangles; iCheckTriangle++)
+        {
+            float3 checkPos0 = make_float3(
+                afTriangleVertexPositions1[iCheckTriangle * 9],
+                afTriangleVertexPositions1[iCheckTriangle * 9 + 1],
+                afTriangleVertexPositions1[iCheckTriangle * 9 + 2]);
+            float3 checkPos1 = make_float3(
+                afTriangleVertexPositions1[iCheckTriangle * 9 + 3],
+                afTriangleVertexPositions1[iCheckTriangle * 9 + 4],
+                afTriangleVertexPositions1[iCheckTriangle * 9 + 5]);
+            float3 checkPos2 = make_float3(
+                afTriangleVertexPositions1[iCheckTriangle * 9 + 6],
+                afTriangleVertexPositions1[iCheckTriangle * 9 + 7],
+                afTriangleVertexPositions1[iCheckTriangle * 9 + 8]);
+
+            float3 diff0 = normalize(checkPos2 - checkPos0);
+            float3 diff1 = normalize(checkPos1 - checkPos0);
+
+            // normal of the plane
+            float3 checkNormal = cross(diff0, diff1);
+            float fPlaneD = dot(checkNormal, checkPos0) * -1.0f;
+
+            float3 pt1 = pos + faceNormal * 100.0f;
+            fT = rayPlaneIntersection(
+                pos,
+                pt1,
+                checkNormal,
+                fPlaneD);
+
+            // account for forward and backward direction
+            if(fT >= -1.0f && fT <= 1.0f)
+            {
+                float3 intersectionPt = pos + (pt1 - pos) * fT;
+                float3 barycentricPt = barycentric(intersectionPt, checkPos0, checkPos1, checkPos2);
+                bool bProjected =
+                    (barycentricPt.x >= -0.01f && barycentricPt.x <= 1.01f &&
+                        barycentricPt.y >= -0.01f && barycentricPt.y <= 1.01f &&
+                        barycentricPt.z >= -0.01f && barycentricPt.z <= 1.01f);
+                if(bProjected)
+                {
+                    ret = checkPos0 * barycentricPt.x + checkPos1 * barycentricPt.y + checkPos2 * barycentricPt.z;
+                    fIntersectTriangle = float(iCheckTriangle);
+                }
+            }
+
+            if(ret.x != FLT_MAX)
+            {
+                break;
+            }
+        }
+
+        if(ret.x == FLT_MAX)
+        {
+            ret = pos + faceNormal * 10.0f;
+            afRetProjectedPositions[iTriangleVertexIndex] = ret.x;
+            afRetProjectedPositions[iTriangleVertexIndex+1] = ret.y;
+            afRetProjectedPositions[iTriangleVertexIndex+2] = ret.z;
+        }
+        else
+        {
+            afRetProjectedPositions[iTriangleVertexIndex] = ret.x;
+            afRetProjectedPositions[iTriangleVertexIndex + 1] = ret.y;
+            afRetProjectedPositions[iTriangleVertexIndex + 2] = ret.z;
+        }
+
+        afIntersectInfo[iTriangle * 3 * 2 + i * 2] = fT;
+        afIntersectInfo[iTriangle * 3 * 2 + i * 2 + 1] = fIntersectTriangle;
+
+    }   // for i = 0 to 3
+}
+
+/*
+**
+*/
+__global__
+void buildClusterEdgeAdjacency2(
+    uint32_t* paaiRetAdjacentEdgeClusters,
+    uint32_t* paaiRetNumAdjacentEdgeClusters,
+    float* pafTotalClusterVertexPositions,
+    uint32_t* paaiVertexPositionIndices,
+    uint32_t* paiNumVertexPositionComponents,
+    uint32_t* paiNumVertexPositionIndices,
+    uint32_t* paiVertexPositionComponentOffsets,
+    uint32_t* paiVertexPositionIndexOffsets,
+    uint32_t* paiDistanceSortedCluster,
+    uint32_t iNumClusters)
+{
+    uint32_t iCluster = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
+    if(iCluster >= iNumClusters)
+    {
+        return;
+    }
+
+    uint32_t iVertexPositionComponentOffset = paiVertexPositionComponentOffsets[iCluster];
+    uint32_t iVertexPositionIndexOffset = paiVertexPositionIndexOffsets[iCluster];
+
+    uint32_t iNumTri = paiNumVertexPositionIndices[iCluster];
+    for(uint32_t iTri = 0; iTri < iNumTri; iTri += 3)
+    {
+        for(uint32_t iCheckCluster = 0; iCheckCluster < 10; iCheckCluster++)
+        {
+            uint32_t iCheckClusterID = paiDistanceSortedCluster[iCluster * iNumClusters + iCheckCluster];
+            if(iCheckClusterID == iCluster)
+            {
+                continue;
+            }
+
+            uint32_t iCheckVertexPositionComponentOffset = paiVertexPositionComponentOffsets[iCheckClusterID];
+            uint32_t iCheckVertexPositionIndexOffset = paiVertexPositionIndexOffsets[iCheckClusterID];
+
+            uint32_t iNumSamePos = 0;
+            uint32_t iNumCheckTri = paiNumVertexPositionIndices[iCheckClusterID];
+            for(uint32_t iCheckTri = 0; iCheckTri < iNumCheckTri; iCheckTri += 3)
+            {
+                // check same positions for the triangles
+                for(uint32_t i = 0; i < 3; i++)
+                {
+                    uint32_t iPos = paaiVertexPositionIndices[iVertexPositionIndexOffset + iTri];
+                    uint32_t iCheckPos = paaiVertexPositionIndices[iCheckVertexPositionIndexOffset + iCheckTri];
+
+                    float fX = pafTotalClusterVertexPositions[iVertexPositionComponentOffset + (iPos + i) * 3];
+                    float fY = pafTotalClusterVertexPositions[iVertexPositionComponentOffset + (iPos + i) * 3 + 1];
+                    float fZ = pafTotalClusterVertexPositions[iVertexPositionComponentOffset + (iPos + i) * 3 + 2];
+
+                    bool bSame = false;
+                    for(uint32_t j = 0; j < 3; j++)
+                    {
+                        float fCheckX = pafTotalClusterVertexPositions[iCheckVertexPositionComponentOffset + (iCheckPos + j) * 3];
+                        float fCheckY = pafTotalClusterVertexPositions[iCheckVertexPositionComponentOffset + (iCheckPos + j) * 3 + 1];
+                        float fCheckZ = pafTotalClusterVertexPositions[iCheckVertexPositionComponentOffset + (iCheckPos + j) * 3 + 2];
+
+                        float fLength = _length(fX - fCheckX, fY - fCheckY, fZ - fCheckZ);
+                        if(fLength <= 1.0e-8f)
+                        {
+                            ++iNumSamePos;
+                            bSame = true;
+                            break;
+                        }
+                    }
+
+                    if(bSame)
+                    {
+                        break;
+                    }
+                }
+
+            }   // for check tri
+
+            if(iNumSamePos > 0)
+            {
+                paaiRetAdjacentEdgeClusters[iCluster * iNumClusters + iCheckClusterID] = iNumSamePos;
+            }
+
+        }   // for check cluster
+
+    }   // for tri
+}
+
+/*
+**
+*/
+__global__
+void checkClusterGroupAdjacency2(
+    uint32_t* aiAdjacentClusterGroupVertexIndices,
+    uint32_t* aiNumAdjacentClusterGroupVertices,
+    float3 const* afTotalClusterGroupVertexPositionComponents,
+    uint32_t const* aiNumVertexPositions,
+    uint32_t const* aiClusterGroupVertexPositionArrayByteOffsets,
+    uint32_t iNumTotalClusterGroups)
+{
+    uint32_t iClusterGroup = blockIdx.x * WORKGROUP_SIZE + threadIdx.x;
+    if(iClusterGroup >= iNumTotalClusterGroups)
+    {
+        return;
+    }
+    
+    uint32_t iVertexPositionByteOffset = aiClusterGroupVertexPositionArrayByteOffsets[iClusterGroup];
+    float3 const* aClusterVertexPositions = (float3 const*)((char*)afTotalClusterGroupVertexPositionComponents + iVertexPositionByteOffset);
+    uint32_t iNumVertexPositions = aiNumVertexPositions[iClusterGroup];
+    
+    uint32_t iNumAdjacentClusterGroupVertices = 0;
+    for(uint32_t iVertex = 0; iVertex < iNumVertexPositions; iVertex++)
+    {
+        float3 const& position = aClusterVertexPositions[iVertex];
+        bool bHasAdjacentVertex = false;
+        for(uint32_t iCheckClusterGroup = 0; iCheckClusterGroup < iNumTotalClusterGroups; iCheckClusterGroup++)
+        {
+            if(iCheckClusterGroup == iClusterGroup)
+            {
+                continue;
+            }
+
+            uint32_t iCheckVertexPositionByteOffset = aiClusterGroupVertexPositionArrayByteOffsets[iCheckClusterGroup];
+            float3 const* aCheckClusterVertexPositions = (float3 const*)((char*)afTotalClusterGroupVertexPositionComponents + iCheckVertexPositionByteOffset);
+            uint32_t iNumCheckVertexPositions = aiNumVertexPositions[iCheckClusterGroup];
+
+            for(uint32_t iCheckVertex = 0; iCheckVertex < iNumCheckVertexPositions; iCheckVertex++)
+            {
+                float3 const& checkPosition = aCheckClusterVertexPositions[iCheckVertex];
+                float3 diff = position - checkPosition;
+
+                if(lengthSquared(diff) <= 1.0e-10f)
+                {
+if(iNumAdjacentClusterGroupVertices >= MAX_BOUNDARY_VERTICES_PER_CLUSTER_GROUP)
+{
+    printf("wtf\n");
+}
+                    
+                    uint32_t iIndex = iClusterGroup * MAX_BOUNDARY_VERTICES_PER_CLUSTER_GROUP + iNumAdjacentClusterGroupVertices;
+                    aiAdjacentClusterGroupVertexIndices[iIndex] = iVertex;
+
+                    ++iNumAdjacentClusterGroupVertices;
+                    bHasAdjacentVertex = true;
+
+                    break;
+                }
+
+            }   // for check vertex component = 0 to num vertex components
+
+            if(bHasAdjacentVertex)
+            {
+                break;
+            }
+
+        }   // for check cluster group = 0 to num cluster groups 
+    
+    }   // for vertex = 0 to num vertices in cluster group
+
+    aiNumAdjacentClusterGroupVertices[iClusterGroup] = iNumAdjacentClusterGroupVertices;
+}
+
 #undef uint32_t
 #undef int32_t
 
@@ -1448,6 +1758,7 @@ void getClusterDistances(
 #include "LogPrint.h"
 
 #include <chrono>
+#include <assert.h>
 
 /*
 **
@@ -1589,8 +1900,8 @@ auto start = std::chrono::high_resolution_clock::now();
         iNumClusterGroups * sizeof(int),
         cudaMemcpyHostToDevice);
 
-    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(float(iNumTotalTriangleIndices / 3) / 512.0f));
-    checkClusterGroupBoundaryVertices2<<<iNumBlocks, 512>>>(
+    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(float(iNumTotalTriangleIndices / 3) / float(WORKGROUP_SIZE)));
+    checkClusterGroupBoundaryVertices2<<<iNumBlocks, WORKGROUP_SIZE>>>(
         aiRetClusterGroupBoundaryVertexIndices,
         aiRetNumClusterGroupBoundaryVertices,
         iNumClusterGroups,
@@ -1655,7 +1966,7 @@ auto start = std::chrono::high_resolution_clock::now();
 
 auto end = std::chrono::high_resolution_clock::now();
 uint64_t iSeconds = std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
-DEBUG_PRINTF("*** took %d seconds for checkClusterGroupBoundaryVerticesCUDA to complete ***\n", iSeconds);
+DEBUG_PRINTF("*** took %lld seconds for checkClusterGroupBoundaryVerticesCUDA to complete ***\n", iSeconds);
 
 }
 
@@ -1664,7 +1975,8 @@ DEBUG_PRINTF("*** took %d seconds for checkClusterGroupBoundaryVerticesCUDA to c
 */
 void buildClusterAdjacencyCUDA(
     std::vector<std::vector<uint32_t>>& aaiNumAdjacentVertices,
-    std::vector<std::vector<vec3>> const& aaVertexPositions)
+    std::vector<std::vector<vec3>> const& aaVertexPositions,
+    bool bOnlyEdgeAdjacent)
 {
 DEBUG_PRINTF("*** start buildClusterAdjacencyCUDA ***\n");
 auto start = std::chrono::high_resolution_clock::now();
@@ -1746,13 +2058,14 @@ auto start = std::chrono::high_resolution_clock::now();
 //    uint32_t * aiClusterVertexPositionComponentOffsets,
 //    uint32_t iNumTotalClusters)
 
-    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumClusters) / 512.0f));
-    checkClusterAdjacency<<<iNumBlocks, 512>>>(
+    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumClusters) / float(WORKGROUP_SIZE)));
+    checkClusterAdjacency<<<iNumBlocks, WORKGROUP_SIZE>>>(
         paiNumAdjacentClusterVertices,
         pafTotalClusterVertexPositions,
         paiNumVertexPositionComponents,
         paiNumVertexPositionComponentOffsets,
-        iNumClusters);
+        iNumClusters,
+        bOnlyEdgeAdjacent);
 
     std::vector<uint32_t> aiNumAdjacentClusterVerticesCPU(iNumClusters * iNumClusters);
     cudaMemcpy(
@@ -1779,9 +2092,136 @@ auto start = std::chrono::high_resolution_clock::now();
 
 auto end = std::chrono::high_resolution_clock::now();
 uint64_t iSeconds = std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
-DEBUG_PRINTF("*** took %d seconds for buildClusterAdjacencyCUDA to finish ***\n",
+DEBUG_PRINTF("*** took %lld seconds for buildClusterAdjacencyCUDA to finish ***\n",
     iSeconds);
 
+}
+
+/*
+**
+*/
+void getClusterGroupBoundaryVerticesCUDA2(
+    std::vector<std::vector<uint32_t>>& aaiClusterGroupBoundaryVertices,
+    std::vector<std::vector<vec3>> const& aaClusterGroupVertexPositions)
+{
+    DEBUG_PRINTF("*** start getClusterGroupBoundaryVerticesCUDA2 ***\n");
+    auto start = std::chrono::high_resolution_clock::now();
+
+    uint32_t iNumClusterGroups = static_cast<uint32_t>(aaClusterGroupVertexPositions.size());
+
+    uint32_t iCurrVertexPositionDataOffset = 0;
+    std::vector<uint32_t> aiNumVertexPositions(iNumClusterGroups);
+
+    for(uint32_t iClusterGroup = 0; iClusterGroup < iNumClusterGroups; iClusterGroup++)
+    {
+        aiNumVertexPositions[iClusterGroup] = static_cast<uint32_t>(aaClusterGroupVertexPositions[iClusterGroup].size());
+        iCurrVertexPositionDataOffset += static_cast<uint32_t>(aaClusterGroupVertexPositions[iClusterGroup].size() * sizeof(float3));
+    }
+
+    // copy to device memory
+    uint32_t* paiRetClusterGroupAdjacentVertexIndices = nullptr;
+    cudaMalloc(
+        &paiRetClusterGroupAdjacentVertexIndices,
+        iNumClusterGroups * MAX_BOUNDARY_VERTICES_PER_CLUSTER_GROUP * sizeof(uint32_t));
+    
+    uint32_t* paiRetNumAdjacentClusterGroupVertices = nullptr;
+    cudaMalloc(
+        &paiRetNumAdjacentClusterGroupVertices,
+        iNumClusterGroups * sizeof(uint32_t));
+    
+    uint32_t iTotalVertexPositionSize = 0;
+    for(uint32_t iClusterGroup = 0; iClusterGroup < iNumClusterGroups; iClusterGroup++)
+    {
+        iTotalVertexPositionSize += static_cast<uint32_t>(aaClusterGroupVertexPositions[iClusterGroup].size() * sizeof(float3));
+    }
+
+    float3* paClusterGroupVertexPositions = nullptr;
+    cudaMalloc(
+        &paClusterGroupVertexPositions,
+        iTotalVertexPositionSize);
+    uint32_t iByteOffset = 0;
+    for(uint32_t iClusterGroup = 0; iClusterGroup < iNumClusterGroups; iClusterGroup++)
+    {
+        cudaMemcpy(
+            (char *)paClusterGroupVertexPositions + iByteOffset,
+            aaClusterGroupVertexPositions[iClusterGroup].data(),
+            aaClusterGroupVertexPositions[iClusterGroup].size() * sizeof(float3),
+            cudaMemcpyHostToDevice);
+        iByteOffset += static_cast<uint32_t>(aaClusterGroupVertexPositions[iClusterGroup].size() * sizeof(float3));
+    }
+
+    uint32_t* paiNumClusterGroupVertexPositions = nullptr;
+    cudaMalloc(
+        &paiNumClusterGroupVertexPositions,
+        iNumClusterGroups * sizeof(uint32_t));
+    iByteOffset = 0;
+    for(uint32_t i = 0; i < iNumClusterGroups; i++)
+    {
+        uint32_t iNumVertexPositions = static_cast<uint32_t>(aaClusterGroupVertexPositions[i].size());
+        cudaMemcpy(
+            paiNumClusterGroupVertexPositions + i,
+            &iNumVertexPositions,
+            sizeof(uint32_t),
+            cudaMemcpyHostToDevice);
+    }
+
+    uint32_t* paiClusterGroupVertexPositionArrayByteOffsets = nullptr;
+    cudaMalloc(
+        &paiClusterGroupVertexPositionArrayByteOffsets,
+        iNumClusterGroups * sizeof(uint32_t));
+    iByteOffset = 0;
+    for(uint32_t i = 0; i < iNumClusterGroups; i++)
+    {
+        cudaMemcpy(
+            paiClusterGroupVertexPositionArrayByteOffsets + i,
+            &iByteOffset,
+            sizeof(uint32_t),
+            cudaMemcpyHostToDevice);
+        uint32_t iDataSize = static_cast<uint32_t>(aaClusterGroupVertexPositions[i].size() * sizeof(float3));
+        iByteOffset += iDataSize;
+    }
+
+    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumClusterGroups) / float(WORKGROUP_SIZE)));
+    checkClusterGroupAdjacency2<<<iNumBlocks, WORKGROUP_SIZE>>>(
+        paiRetClusterGroupAdjacentVertexIndices,
+        paiRetNumAdjacentClusterGroupVertices,
+        paClusterGroupVertexPositions,
+        paiNumClusterGroupVertexPositions,
+        paiClusterGroupVertexPositionArrayByteOffsets,
+        iNumClusterGroups);
+
+    std::vector<uint32_t> aiTotalClusterGroupAdjacentVerticesCPU(MAX_BOUNDARY_VERTICES_PER_CLUSTER_GROUP * iNumClusterGroups);
+    cudaMemcpy(
+        aiTotalClusterGroupAdjacentVerticesCPU.data(),
+        paiRetClusterGroupAdjacentVertexIndices,
+        iNumClusterGroups * MAX_BOUNDARY_VERTICES_PER_CLUSTER_GROUP * sizeof(uint32_t),
+        cudaMemcpyDeviceToHost);
+
+    std::vector<uint32_t> aiNumAdjacentVertices(iNumClusterGroups);
+    cudaMemcpy(
+        aiNumAdjacentVertices.data(),
+        paiRetNumAdjacentClusterGroupVertices,
+        iNumClusterGroups * sizeof(int),
+        cudaMemcpyDeviceToHost);
+    
+    iByteOffset = 0;
+    aaiClusterGroupBoundaryVertices.resize(iNumClusterGroups);
+    for(uint32_t iClusterGroup = 0; iClusterGroup < iNumClusterGroups; iClusterGroup++)
+    {
+        uint32_t iNumBoundaryVertices = aiNumAdjacentVertices[iClusterGroup];
+        aaiClusterGroupBoundaryVertices[iClusterGroup].resize(iNumBoundaryVertices);
+        memcpy(
+            aaiClusterGroupBoundaryVertices[iClusterGroup].data(),
+            (char*)aiTotalClusterGroupAdjacentVerticesCPU.data() + iByteOffset,
+            iNumBoundaryVertices * sizeof(uint32_t));
+
+        iByteOffset += static_cast<uint32_t>(MAX_BOUNDARY_VERTICES_PER_CLUSTER_GROUP * sizeof(uint32_t));
+    }
+
+    cudaFree(paiRetClusterGroupAdjacentVertexIndices);
+    cudaFree(paiRetNumAdjacentClusterGroupVertices);
+    cudaFree(paClusterGroupVertexPositions);
+    cudaFree(paiNumClusterGroupVertexPositions);
 }
 
 /*
@@ -1877,8 +2317,8 @@ auto start = std::chrono::high_resolution_clock::now();
         iNumClusterGroups * iNumClusterGroups * sizeof(int), 
         cudaMemcpyHostToDevice);
 
-    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumTotalVertices) / 512.0f));
-    checkClusterGroupAdjacency <<<iNumBlocks, 512>>>(
+    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumTotalVertices) / float(WORKGROUP_SIZE)));
+    checkClusterGroupAdjacency <<<iNumBlocks, WORKGROUP_SIZE>>>(
         paiClusterGroupAdjacentVertexIndices,
         paiNumAdjacentClusterVertices,
         pafTotalClusterVertexPositions,
@@ -1910,6 +2350,10 @@ auto start = std::chrono::high_resolution_clock::now();
             aaiClusterGroupBoundaryVertices[iClusterGroup].data(),
             aiTotalClusterGroupAdjacentVerticesCPU.data() + iClusterGroup * MAX_BOUNDARY_VERTICES_PER_CLUSTER_GROUP,
             sizeof(int) * iNumAdjacentVertices);
+        for(auto const& iVertex : aaiClusterGroupBoundaryVertices[iClusterGroup])
+        {
+            assert(iVertex < aaClusterGroupVertexPositions[iClusterGroup].size());
+        }
     }
 
     cudaFree(paiNumAdjacentClusterVertices);
@@ -1920,7 +2364,7 @@ auto start = std::chrono::high_resolution_clock::now();
 
 auto end = std::chrono::high_resolution_clock::now();
 uint64_t iSeconds = std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
-DEBUG_PRINTF("*** took %d seconds for getClusterGroupBoundaryVerticesCUDA to finish ***\n",
+DEBUG_PRINTF("*** took %lld seconds for getClusterGroupBoundaryVerticesCUDA to finish ***\n",
     iSeconds);
 
 }
@@ -2103,8 +2547,8 @@ void computeEdgeCollapseInfoCUDA(
         //    uint32_t iNumEdges,
         //    uint32_t iNumTriangleVertexPositionIndices)
 
-        uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumEdges) / 512.0f));
-        getMatchingTriangleNormalAndUV<<<iNumBlocks,512>>>(
+        uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumEdges) / float(WORKGROUP_SIZE)));
+        getMatchingTriangleNormalAndUV<<<iNumBlocks, WORKGROUP_SIZE>>>(
             aiEdgeNormalIndices,
             aiEdgeUVIndices,
             aiClusterGroupTrianglePositionIndicesGPU,
@@ -2149,9 +2593,9 @@ void computeEdgeCollapseInfoCUDA(
             iNumVertices * sizeof(int));
         cudaMemset(aiNumVertexPlanes, 0, iNumVertices * sizeof(int));
 
-        uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumVertices) / 512.0f));
+        uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumVertices) / float(WORKGROUP_SIZE)));
         iNumBlocks = std::max(iNumBlocks, 1u);
-        computeAverageVertexNormals<<<iNumBlocks, 512>>>(
+        computeAverageVertexNormals<<<iNumBlocks, WORKGROUP_SIZE>>>(
             afVertexPlanes,
             afAverageVertexNormals,
             afQuadrics,
@@ -2167,7 +2611,7 @@ void computeEdgeCollapseInfoCUDA(
             &afVertexNormalPlaneAngles, 
             iNumVertices * sizeof(float));
         
-        computeTotalNormalPlaneAngles<<<iNumBlocks,512>>>(
+        computeTotalNormalPlaneAngles<<<iNumBlocks, WORKGROUP_SIZE>>>(
             afVertexNormalPlaneAngles,
             afAverageVertexNormals,
             afVertexPlanes,
@@ -2225,8 +2669,8 @@ void computeEdgeCollapseInfoCUDA(
 #if 0
     {
         uint32_t iNumVertices = static_cast<uint32_t>(aClusterGroupVertexPositions.size());
-        uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumVertices) / 512.0f));
-        computeQuadrics<<<iNumBlocks, 512>>>(
+        uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumVertices) / float(WORKGROUP_SIZE)));
+        computeQuadrics<<<iNumBlocks, WORKGROUP_SIZE>>>(
             afQuadrics,
             afVertexAdjacentTriangleCounts,
             aiClusterGroupTrianglePositionIndicesGPU,
@@ -2285,9 +2729,9 @@ void computeEdgeCollapseInfoCUDA(
         //    uint32_t iNumEdges)
 
 
-    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(aiEdgePairs.size() / 2) / 512.0f));
+    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(aiEdgePairs.size() / 2) / float(WORKGROUP_SIZE)));
     iNumBlocks = std::max(iNumBlocks, 1u);
-    computeEdgeCollapseInfo<<<iNumBlocks,512>>>(
+    computeEdgeCollapseInfo<<<iNumBlocks, WORKGROUP_SIZE>>>(
         afEdgeCollapseCosts,
         aiEdgeCollapseVertexIndices0,
         aiEdgeCollapseVertexIndices1,
@@ -2396,6 +2840,79 @@ void computeEdgeCollapseInfoCUDA(
 /*
 **
 */
+void getProjectVertexDistancesCUDA(
+    std::vector<vec3>& aProjectedPositions,
+    std::vector<vec3> const& aTriangleVertexPositions0,
+    std::vector<vec3> const& aTriangleVertexPositions1)
+{
+    uint32_t iNumVertices0 = static_cast<uint32_t>(aTriangleVertexPositions0.size());
+    uint32_t iNumVertices1 = static_cast<uint32_t>(aTriangleVertexPositions1.size());
+
+    assert(iNumVertices0 % 3 == 0);
+    assert(iNumVertices1 % 3 == 0);
+
+    float* afRetProjectedPositions;
+    cudaMalloc(&afRetProjectedPositions, iNumVertices0 * sizeof(float) * 3);
+    cudaMemset(afRetProjectedPositions, 0, iNumVertices0 * sizeof(float) * 3);
+
+    float* afTriangleVertexPositions0;
+    cudaMalloc(&afTriangleVertexPositions0, iNumVertices0 * 3 * sizeof(float));
+    cudaMemcpy(
+        afTriangleVertexPositions0,
+        aTriangleVertexPositions0.data(),
+        aTriangleVertexPositions0.size() * 3 * sizeof(float),
+        cudaMemcpyHostToDevice);
+
+    float* afTriangleVertexPositions1;
+    cudaMalloc(&afTriangleVertexPositions1, iNumVertices1 * 3 * sizeof(float));
+    cudaMemcpy(
+        afTriangleVertexPositions1,
+        aTriangleVertexPositions1.data(),
+        aTriangleVertexPositions1.size() * 3 * sizeof(float),
+        cudaMemcpyHostToDevice);
+
+    float* afIntersectInfo;
+    cudaMalloc(&afIntersectInfo, iNumVertices0 * 2 * sizeof(float));
+    cudaMemset(&afIntersectInfo, 0, iNumVertices0 * 2 * sizeof(float));
+
+    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumVertices0) / float(WORKGROUP_SIZE)));
+    iNumBlocks = std::max(iNumBlocks, 1u);
+    projectVertices<<<iNumBlocks, WORKGROUP_SIZE>>>(
+        afRetProjectedPositions,
+        afTriangleVertexPositions0,
+        afTriangleVertexPositions1,
+        afIntersectInfo,
+        iNumVertices0,
+        iNumVertices1);
+
+    aProjectedPositions.resize(iNumVertices0);
+    cudaMemcpy(
+        aProjectedPositions.data(),
+        afRetProjectedPositions,
+        iNumVertices0 * sizeof(float) * 3,
+        cudaMemcpyKind::cudaMemcpyDeviceToHost);
+
+    struct IntersectInfo
+    {
+        float mfT;
+        float mfTriangle;
+    };
+
+    std::vector<IntersectInfo> afIntersectT(iNumVertices0);
+    cudaMemcpy(
+        afIntersectT.data(),
+        afIntersectInfo,
+        iNumVertices0 * 2 * sizeof(float),
+        cudaMemcpyKind::cudaMemcpyDeviceToHost);
+
+    cudaFree(afRetProjectedPositions);
+    cudaFree(afTriangleVertexPositions1);
+    cudaFree(afTriangleVertexPositions0);
+}
+
+/*
+**
+*/
 void getShortestVertexDistancesCUDA(
     std::vector<float>& afClosestDistances,
     std::vector<uint32_t>& aiClosestVertexPositionIndices,
@@ -2436,9 +2953,9 @@ void getShortestVertexDistancesCUDA(
         aVertexPositions1.size() * 3 * sizeof(float),
         cudaMemcpyHostToDevice);
 
-    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumVertices0) / 512.0f));
+    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumVertices0) / float(WORKGROUP_SIZE)));
     iNumBlocks = std::max(iNumBlocks, 1u);
-    getShortestVertexDistances<<<iNumBlocks,512>>>(
+    getShortestVertexDistances<<<iNumBlocks, WORKGROUP_SIZE>>>(
         afRetShortestDistances,
         aiRetShortestVertexPositionIndices,
         afVertexPositions0,
@@ -2577,8 +3094,8 @@ void getSortedEdgeAdjacentClustersCUDA(
     float* pafClusterMinMaxCenterRadius;
     cudaMalloc(&pafClusterMinMaxCenterRadius, iNumClusters * 10 * sizeof(float));
 
-    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumClusters) / 512.0f));
-    getClusterBounds << <iNumBlocks, 512 >> > (
+    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumClusters) / float(WORKGROUP_SIZE)));
+    getClusterBounds<<<iNumBlocks, WORKGROUP_SIZE>>>(
         pafClusterMinMaxCenterRadius,
         pafTotalClusterVertexPositions,
         paiVertexPositionComponentOffsets,
@@ -2625,7 +3142,7 @@ void getSortedEdgeAdjacentClustersCUDA(
         iNumClusters * 3 * sizeof(float),
         cudaMemcpyHostToDevice);
 
-    getClusterDistances<<<iNumBlocks, 512>>>(
+    getClusterDistances<<<iNumBlocks, WORKGROUP_SIZE>>>(
         pafRetDistances,
         pafClusterCenters,
         iNumClusters);
@@ -2694,7 +3211,7 @@ void getSortedEdgeAdjacentClustersCUDA(
 
     auto end = std::chrono::high_resolution_clock::now();
     uint64_t iSeconds = std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
-    DEBUG_PRINTF("*** took %d seconds for getSortedEdgeAdjacentClustersCUDA to finish ***\n",
+    DEBUG_PRINTF("*** took %lld seconds for getSortedEdgeAdjacentClustersCUDA to finish ***\n",
         iSeconds);
 }
 
@@ -2718,10 +3235,10 @@ void buildClusterEdgeAdjacencyCUDA(
     std::vector<uint32_t> aiNumVertexPositionIndices(iNumClusters);
     for(uint32_t iCluster = 0; iCluster < iNumClusters; iCluster++)
     {
-        DEBUG_PRINTF("cluster %d vertex position offset: %d vertex position index offset: %d\n",
-            iCluster,
-            iCurrVertexPositionDataOffset,
-            iCurrVertexPositionIndexDataOffset);
+        //DEBUG_PRINTF("cluster %d vertex position offset: %d vertex position index offset: %d\n",
+        //    iCluster,
+        //    iCurrVertexPositionDataOffset,
+        //    iCurrVertexPositionIndexDataOffset);
 
         aiNumVertexPositionComponents[iCluster] = static_cast<uint32_t>(aaVertexPositions[iCluster].size() * 3);
         aiVertexPositionComponentArrayOffsets[iCluster] = iCurrVertexPositionDataOffset;
@@ -2807,8 +3324,8 @@ void buildClusterEdgeAdjacencyCUDA(
     float* pafClusterMinMaxCenterRadius;
     cudaMalloc(&pafClusterMinMaxCenterRadius, iNumClusters * 10 * sizeof(float));
 
-    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumClusters) / 512.0f));
-    getClusterBounds<<<iNumBlocks,512>>>(
+    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumClusters) / float(WORKGROUP_SIZE)));
+    getClusterBounds<<<iNumBlocks, WORKGROUP_SIZE>>>(
         pafClusterMinMaxCenterRadius,
         pafTotalClusterVertexPositions,
         paiVertexPositionComponentOffsets,
@@ -2855,7 +3372,7 @@ void buildClusterEdgeAdjacencyCUDA(
         iNumClusters * 3 * sizeof(float),
         cudaMemcpyHostToDevice);
 
-    getClusterDistances<<<iNumBlocks,512>>>(
+    getClusterDistances<<<iNumBlocks,WORKGROUP_SIZE>>>(
         pafRetDistances,
         pafClusterCenters,
         iNumClusters);
@@ -2922,7 +3439,7 @@ void buildClusterEdgeAdjacencyCUDA(
         aiSortedClusters.size() * sizeof(uint32_t),
         cudaMemcpyHostToDevice);
 
-    buildClusterEdgeAdjacency<<<iNumBlocks, 512>>>(
+    buildClusterEdgeAdjacency<<<iNumBlocks, WORKGROUP_SIZE>>>(
         paaiRetAdjacentEdgeClusters,
         paiRetNumAdjacentEdgeClusters,
         pafTotalClusterVertexPositions,
@@ -2973,7 +3490,286 @@ void buildClusterEdgeAdjacencyCUDA(
 
     auto end = std::chrono::high_resolution_clock::now();
     uint64_t iSeconds = std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
-    DEBUG_PRINTF("*** took %d seconds for buildClusterEdgeAdjacencyCUDA to finish ***\n",
+    DEBUG_PRINTF("*** took %lld seconds for buildClusterEdgeAdjacencyCUDA to finish ***\n",
         iSeconds);
 
+}
+
+/*
+**
+*/
+void buildClusterEdgeAdjacencyCUDA2(
+    std::vector<std::vector<std::pair<uint32_t, uint32_t>>>& aaiAdjacentEdgeClusters,
+    std::vector<std::vector<vec3>> const& aaVertexPositions,
+    std::vector<std::vector<uint32_t>> const& aaiVertexPositionIndices)
+{
+    DEBUG_PRINTF("*** start buildClusterEdgeAdjacencyCUDA ***\n");
+    auto start = std::chrono::high_resolution_clock::now();
+
+    uint32_t iCurrVertexPositionIndexDataOffset = 0;
+    uint32_t iCurrVertexPositionDataOffset = 0;
+    uint32_t iNumClusters = static_cast<uint32_t>(aaVertexPositions.size());
+    std::vector<uint32_t> aiNumVertexPositionComponents(iNumClusters);
+    std::vector<uint32_t> aiVertexPositionComponentArrayOffsets(iNumClusters);
+    std::vector<uint32_t> aiVertexPositionIndexArrayOffsets(iNumClusters);
+    std::vector<uint32_t> aiNumVertexPositionIndices(iNumClusters);
+    for(uint32_t iCluster = 0; iCluster < iNumClusters; iCluster++)
+    {
+        //DEBUG_PRINTF("cluster %d vertex position offset: %d vertex position index offset: %d\n",
+        //    iCluster,
+        //    iCurrVertexPositionDataOffset,
+        //    iCurrVertexPositionIndexDataOffset);
+
+        aiNumVertexPositionComponents[iCluster] = static_cast<uint32_t>(aaVertexPositions[iCluster].size() * 3);
+        aiVertexPositionComponentArrayOffsets[iCluster] = iCurrVertexPositionDataOffset;
+        iCurrVertexPositionDataOffset += static_cast<uint32_t>(aaVertexPositions[iCluster].size() * 3);
+
+        aiNumVertexPositionIndices[iCluster] = static_cast<uint32_t>(aaiVertexPositionIndices[iCluster].size());
+        aiVertexPositionIndexArrayOffsets[iCluster] = iCurrVertexPositionIndexDataOffset;
+        iCurrVertexPositionIndexDataOffset += static_cast<uint32_t>(aaiVertexPositionIndices[iCluster].size());
+    }
+
+    // allocate device memory
+    uint32_t* paaiRetAdjacentEdgeClusters;
+    cudaMalloc(&paaiRetAdjacentEdgeClusters, iNumClusters * iNumClusters * sizeof(uint32_t));
+    cudaMemset(paaiRetAdjacentEdgeClusters, 0xff, iNumClusters * iNumClusters * sizeof(uint32_t));
+
+    uint32_t* paiRetNumAdjacentEdgeClusters;
+    cudaMalloc(&paiRetNumAdjacentEdgeClusters, iNumClusters * sizeof(uint32_t));
+    cudaMemset(paiRetNumAdjacentEdgeClusters, 0, iNumClusters * sizeof(uint32_t));
+
+    uint32_t* paiNumVertexPositionComponents;
+    cudaMalloc(&paiNumVertexPositionComponents, iNumClusters * sizeof(uint32_t));
+    cudaMemcpy(
+        paiNumVertexPositionComponents,
+        aiNumVertexPositionComponents.data(),
+        aiNumVertexPositionComponents.size() * sizeof(int),
+        cudaMemcpyHostToDevice);
+
+    uint32_t* paiVertexPositionComponentOffsets;
+    cudaMalloc(&paiVertexPositionComponentOffsets, iNumClusters * sizeof(uint32_t));
+    cudaMemcpy(
+        paiVertexPositionComponentOffsets,
+        aiVertexPositionComponentArrayOffsets.data(),
+        aiVertexPositionComponentArrayOffsets.size() * sizeof(int),
+        cudaMemcpyHostToDevice);
+
+    uint32_t* paiVertexPositionIndexOffsets;
+    cudaMalloc(&paiVertexPositionIndexOffsets, iNumClusters * sizeof(uint32_t));
+    cudaMemcpy(
+        paiVertexPositionIndexOffsets,
+        aiVertexPositionIndexArrayOffsets.data(),
+        aiVertexPositionIndexArrayOffsets.size() * sizeof(int),
+        cudaMemcpyHostToDevice);
+
+    uint32_t* paiNumVertexPositionIndices;
+    cudaMalloc(&paiNumVertexPositionIndices, iNumClusters * sizeof(uint32_t));
+    cudaMemcpy(
+        paiNumVertexPositionIndices,
+        aiNumVertexPositionIndices.data(),
+        aiNumVertexPositionIndices.size() * sizeof(int),
+        cudaMemcpyHostToDevice);
+
+
+
+    // copy vertex positions
+    float* pafTotalClusterVertexPositions;
+    cudaMalloc(&pafTotalClusterVertexPositions, iCurrVertexPositionDataOffset * sizeof(float));
+    uint32_t iArrayIndexOffset = 0;
+    for(uint32_t iCluster = 0; iCluster < iNumClusters; iCluster++)
+    {
+        cudaMemcpy(
+            pafTotalClusterVertexPositions + iArrayIndexOffset,
+            aaVertexPositions[iCluster].data(),
+            aaVertexPositions[iCluster].size() * sizeof(float) * 3,
+            cudaMemcpyHostToDevice);
+        iArrayIndexOffset += static_cast<uint32_t>(aaVertexPositions[iCluster].size() * 3);
+    }
+
+    // copy vertex indices
+    uint32_t* paaiVertexPositionIndices;
+    cudaMalloc(&paaiVertexPositionIndices, iCurrVertexPositionIndexDataOffset * sizeof(uint32_t));
+    iArrayIndexOffset = 0;
+    for(uint32_t iCluster = 0; iCluster < iNumClusters; iCluster++)
+    {
+        cudaMemcpy(
+            paaiVertexPositionIndices + iArrayIndexOffset,
+            aaiVertexPositionIndices[iCluster].data(),
+            aaiVertexPositionIndices[iCluster].size() * sizeof(uint32_t),
+            cudaMemcpyHostToDevice);
+
+        iArrayIndexOffset += static_cast<uint32_t>(aaiVertexPositionIndices[iCluster].size());
+    }
+
+    float* pafClusterMinMaxCenterRadius;
+    cudaMalloc(&pafClusterMinMaxCenterRadius, iNumClusters * 10 * sizeof(float));
+
+    uint32_t iNumBlocks = static_cast<uint32_t>(ceilf(static_cast<float>(iNumClusters) / float(WORKGROUP_SIZE)));
+    getClusterBounds << <iNumBlocks, WORKGROUP_SIZE >> > (
+        pafClusterMinMaxCenterRadius,
+        pafTotalClusterVertexPositions,
+        paiVertexPositionComponentOffsets,
+        paiNumVertexPositionComponents,
+        iNumClusters);
+
+    std::vector<float> afClusterMinMaxCenterRadiusCPU(iNumClusters * 10);
+    cudaMemcpy(
+        afClusterMinMaxCenterRadiusCPU.data(),
+        pafClusterMinMaxCenterRadius,
+        afClusterMinMaxCenterRadiusCPU.size() * sizeof(float),
+        cudaMemcpyDeviceToHost);
+
+    std::vector<vec3> aMinBounds(iNumClusters);
+    std::vector<vec3> aMaxBounds(iNumClusters);
+    std::vector<vec3> aCenter(iNumClusters);
+    std::vector<float> afRadius(iNumClusters);
+    for(uint32_t iCluster = 0; iCluster < iNumClusters; iCluster++)
+    {
+        aMinBounds[iCluster].x = afClusterMinMaxCenterRadiusCPU[iCluster * 10];
+        aMinBounds[iCluster].y = afClusterMinMaxCenterRadiusCPU[iCluster * 10 + 1];
+        aMinBounds[iCluster].z = afClusterMinMaxCenterRadiusCPU[iCluster * 10 + 2];
+
+        aMaxBounds[iCluster].x = afClusterMinMaxCenterRadiusCPU[iCluster * 10 + 3];
+        aMaxBounds[iCluster].y = afClusterMinMaxCenterRadiusCPU[iCluster * 10 + 4];
+        aMaxBounds[iCluster].z = afClusterMinMaxCenterRadiusCPU[iCluster * 10 + 5];
+
+        aCenter[iCluster].x = afClusterMinMaxCenterRadiusCPU[iCluster * 10 + 6];
+        aCenter[iCluster].y = afClusterMinMaxCenterRadiusCPU[iCluster * 10 + 7];
+        aCenter[iCluster].z = afClusterMinMaxCenterRadiusCPU[iCluster * 10 + 8];
+
+        afRadius[iCluster] = afClusterMinMaxCenterRadiusCPU[iCluster * 10 + 9];
+    }
+
+    float* pafRetDistances;
+    cudaMalloc(&pafRetDistances, iNumClusters * iNumClusters * sizeof(float));
+    cudaMemset(pafRetDistances, 0, iNumClusters * iNumClusters * sizeof(float));
+
+    float* pafClusterCenters;
+    cudaMalloc(&pafClusterCenters, iNumClusters * 3 * sizeof(float));
+    cudaMemcpy(
+        pafClusterCenters,
+        aCenter.data(),
+        iNumClusters * 3 * sizeof(float),
+        cudaMemcpyHostToDevice);
+
+    getClusterDistances << <iNumBlocks, WORKGROUP_SIZE >> > (
+        pafRetDistances,
+        pafClusterCenters,
+        iNumClusters);
+
+    std::vector<float> afRetDistancesCPU(iNumClusters * iNumClusters);
+    cudaMemcpy(
+        afRetDistancesCPU.data(),
+        pafRetDistances,
+        iNumClusters * iNumClusters * sizeof(float),
+        cudaMemcpyDeviceToHost);
+
+    struct ClusterDistanceInfo
+    {
+        uint32_t        miCluster;
+        float           mfDistance;
+    };
+
+    std::vector<std::vector< ClusterDistanceInfo>> aaClusterDistanceInfo(iNumClusters);
+
+    std::vector<std::vector<float>> aafDistances(iNumClusters);
+    for(uint32_t iCluster = 0; iCluster < iNumClusters; iCluster++)
+    {
+        aaClusterDistanceInfo[iCluster].resize(iNumClusters);
+
+        aafDistances[iCluster].resize(iNumClusters);
+        for(uint32_t iCheckCluster = 0; iCheckCluster < iNumClusters; iCheckCluster++)
+        {
+            uint32_t iIndex = iCluster * iNumClusters + iCheckCluster;
+            aafDistances[iCluster][iCheckCluster] = afRetDistancesCPU[iIndex];
+
+            aaClusterDistanceInfo[iCluster][iCheckCluster].miCluster = iCheckCluster;
+            aaClusterDistanceInfo[iCluster][iCheckCluster].mfDistance = aafDistances[iCluster][iCheckCluster];
+        }
+
+        std::sort(
+            aaClusterDistanceInfo[iCluster].begin(),
+            aaClusterDistanceInfo[iCluster].end(),
+            [](ClusterDistanceInfo const& checkInfo0, ClusterDistanceInfo const& checkInfo1)
+            {
+                return checkInfo0.mfDistance < checkInfo1.mfDistance;
+            }
+        );
+    }
+
+    std::vector<uint32_t> aiSortedClusters(iNumClusters * iNumClusters);
+    for(uint32_t i = 0; i < iNumClusters; i++)
+    {
+        for(uint32_t j = 0; j < iNumClusters; j++)
+        {
+            uint32_t iIndex = i * iNumClusters + j;
+            aiSortedClusters[iIndex] = aaClusterDistanceInfo[i][j].miCluster;
+        }
+    }
+
+    cudaFree(pafClusterMinMaxCenterRadius);
+    cudaFree(pafRetDistances);
+    cudaFree(pafClusterCenters);
+
+    uint32_t* paiDistanceSortedClusterID;
+    cudaMalloc(&paiDistanceSortedClusterID, iNumClusters * iNumClusters * sizeof(uint32_t));
+    cudaMemcpy(
+        paiDistanceSortedClusterID,
+        aiSortedClusters.data(),
+        aiSortedClusters.size() * sizeof(uint32_t),
+        cudaMemcpyHostToDevice);
+
+    buildClusterEdgeAdjacency2<<<iNumBlocks, WORKGROUP_SIZE>>>(
+        paaiRetAdjacentEdgeClusters,
+        paiRetNumAdjacentEdgeClusters,
+        pafTotalClusterVertexPositions,
+        paaiVertexPositionIndices,
+        paiNumVertexPositionComponents,
+        paiNumVertexPositionIndices,
+        paiVertexPositionComponentOffsets,
+        paiVertexPositionIndexOffsets,
+        paiDistanceSortedClusterID,
+        iNumClusters);
+
+    std::vector<uint32_t> aaiRetAdjacentEdgeClustersCPU(iNumClusters * iNumClusters);
+    cudaMemcpy(
+        aaiRetAdjacentEdgeClustersCPU.data(),
+        paaiRetAdjacentEdgeClusters,
+        iNumClusters * iNumClusters * sizeof(uint32_t),
+        cudaMemcpyDeviceToHost);
+
+    std::vector<uint32_t> aiRetNumAdjacentEdgeClustersCPU(iNumClusters);
+    cudaMemcpy(
+        aiRetNumAdjacentEdgeClustersCPU.data(),
+        paiRetNumAdjacentEdgeClusters,
+        iNumClusters * sizeof(int),
+        cudaMemcpyDeviceToHost);
+
+    aaiAdjacentEdgeClusters.resize(iNumClusters);
+    for(uint32_t iCluster = 0; iCluster < iNumClusters; iCluster++)
+    {
+        for(uint32_t i = 0; i < iNumClusters; i++)
+        {
+            uint32_t iIndex = iCluster * iNumClusters + i;
+            if(aaiRetAdjacentEdgeClustersCPU[iIndex] != UINT32_MAX)
+            {
+                aaiAdjacentEdgeClusters[iCluster].push_back(std::make_pair(i, aaiRetAdjacentEdgeClustersCPU[iIndex]));
+            }
+        }
+    }
+
+    cudaFree(paaiRetAdjacentEdgeClusters);
+    cudaFree(paiRetNumAdjacentEdgeClusters);
+    cudaFree(paiNumVertexPositionComponents);
+    cudaFree(paiVertexPositionComponentOffsets);
+    cudaFree(paiVertexPositionIndexOffsets);
+    cudaFree(paiNumVertexPositionIndices);
+    cudaFree(pafTotalClusterVertexPositions);
+    cudaFree(paaiVertexPositionIndices);
+    cudaFree(paiDistanceSortedClusterID);
+
+    auto end = std::chrono::high_resolution_clock::now();
+    uint64_t iSeconds = std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
+    DEBUG_PRINTF("*** took %lld seconds for buildClusterEdgeAdjacencyCUDA2 to finish ***\n",
+        iSeconds);
 }

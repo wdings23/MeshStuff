@@ -12,6 +12,9 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION 
 #include "stb_image_write.h"
 
+
+#include "rasterizerCUDA.h"
+
 void testCameraDistanceScales(
     std::map<uint32_t, float>& aCameraDistanceScales,
     std::vector<float3> const& aVertexPositions,
@@ -37,7 +40,8 @@ void rasterizeTriangle(
     float3 const& normal1,
     float3 const& normal2,
     uint32_t iBufferWidth,
-    uint32_t iBufferHeight)
+    uint32_t iBufferHeight,
+    uint32_t iTriangle)
 {
     float3 screenCoord0 = pos0 * float3(float(iBufferWidth), float(iBufferHeight), 0.0f);
     float3 screenCoord1 = pos1 * float3(float(iBufferWidth), float(iBufferHeight), 0.0f);
@@ -155,7 +159,7 @@ void outputMeshToImage(
         aVertNormals[keyValue.first] = keyValue.second;
     }
 
-    std::vector<float3> aTriangleVertexNormals(aiTriangles.size());
+    std::vector<float4> aTriangleVertexNormals(aiTriangles.size());
     for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aiTriangles.size()); iTri += 3)
     {
         uint32_t iV0 = aiTriangles[iTri];
@@ -166,9 +170,9 @@ void outputMeshToImage(
         float3 const& normal1 = aVertNormals[iV1];
         float3 const& normal2 = aVertNormals[iV2];
 
-        aTriangleVertexNormals[iTri] = normal0;
-        aTriangleVertexNormals[iTri + 1] = normal1;
-        aTriangleVertexNormals[iTri + 2] = normal2;
+        aTriangleVertexNormals[iTri] =      float4(normal0, 1.0f);
+        aTriangleVertexNormals[iTri + 1] =  float4(normal1, 1.0f);
+        aTriangleVertexNormals[iTri + 2] =  float4(normal2, 1.0f);
     }
 
     // average normals and up direction
@@ -223,7 +227,7 @@ void outputMeshToImage(
     // clip space positions
     float3 minClipSpacePosition = float3(FLT_MAX, FLT_MAX, FLT_MAX);
     float3 maxClipSpacePosition = float3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
-    std::vector<float3> aClipSpaceTriangleVertexPositions(aXFormTriangleVertexPositions.size());
+    std::vector<float4> aClipSpaceTriangleVertexPositions(aXFormTriangleVertexPositions.size());
     for(uint32_t iV = 0; iV < static_cast<uint32_t>(aXFormTriangleVertexPositions.size()); iV++)
     {
         aClipSpaceTriangleVertexPositions[iV].x = aXFormTriangleVertexPositions[iV].x / aXFormTriangleVertexPositions[iV].w;
@@ -242,7 +246,8 @@ void outputMeshToImage(
     maxClipSpacePosition = clamp(maxClipSpacePosition, 0.0f, 1.0f);
 
     // intialize depth to 1.0 (far)
-    std::vector<float3> aOutputBuffer(iImageWidth * iImageHeight);
+    std::vector<float3> aColorBuffer(iImageWidth* iImageHeight);
+    std::vector<float3> aPositionBuffer(iImageWidth * iImageHeight);
     std::vector<float3> aNormalBuffer(iImageWidth * iImageHeight);
     std::vector<float> afDepthBuffer(iImageWidth * iImageHeight);
     for(uint32_t i = 0; i < iImageWidth * iImageHeight; i++)
@@ -250,6 +255,80 @@ void outputMeshToImage(
         afDepthBuffer[i] = 1.0f;
     }
 
+    std::vector<float4> aTriangleVertexColors(aiTriangles.size());
+    {
+        //std::vector<float3> aColorBuffer(iImageWidth* iImageHeight);
+        //memset(aColorBuffer.data(), 0, iImageWidth* iImageHeight * 3 * sizeof(float));
+        //
+        //std::vector<float3> aNormalBuffer(iImageWidth * iImageHeight);
+        //memset(aNormalBuffer.data(), 0, iImageWidth * iImageHeight * 3 * sizeof(float));
+        //
+        //std::vector<float> aDepthBuffer(iImageWidth* iImageHeight);
+        //for(uint32_t i = 0; i < iImageWidth * iImageHeight; i++)
+        //{
+        //    aDepthBuffer[i] = 1.0f;
+        //}
+
+        //rasterizeMeshCUDA2(
+        //    aColorBuffer,
+        //    aPositionBuffer,
+        //    aNormalBuffer,
+        //    afDepthBuffer,
+        //    aColorBuffer,
+        //    aClipSpaceTriangleVertexPositions,
+        //    aTriangleVertexNormals,
+        //    aTriangleVertexColors,
+        //    iImageWidth,
+        //    iImageHeight,
+        //    3);
+        
+#if 0
+        char const* pError = nullptr;
+        SaveEXR(
+            reinterpret_cast<float*>(aColorBuffer.data()),
+            iImageWidth,
+            iImageHeight,
+            3,
+            0,
+            "c:\\Users\\Dingwings\\demo-models\\debug-output\\cluster-color-output.exr",
+            &pError
+        );
+
+        SaveEXR(
+            reinterpret_cast<float*>(aNormalBuffer.data()),
+            iImageWidth,
+            iImageHeight,
+            3,
+            0,
+            "c:\\Users\\Dingwings\\demo-models\\debug-output\\cluster-normal-output.exr",
+            &pError
+        );
+
+        std::vector<float3> aDepthBuffer3(iImageWidth * iImageHeight * 3);
+        for(uint32_t iY = 0; iY < iImageHeight; iY++)
+        {
+            for(uint32_t iX = 0; iX < iImageWidth; iX++)
+            {
+                uint32_t iIndex = iY * iImageWidth + iX;
+                float fDepth = aDepthBuffer[iIndex];
+                aDepthBuffer3[iIndex] = float3(fDepth, fDepth, fDepth);
+            }
+        }
+        SaveEXR(
+            reinterpret_cast<float*>(aDepthBuffer3.data()),
+            iImageWidth,
+            iImageHeight,
+            3,
+            0,
+            "c:\\Users\\Dingwings\\demo-models\\debug-output\\cluster-depth-output.exr",
+            &pError
+        );
+
+        int iDebug = 1;
+#endif // #if 0
+    }
+
+#if 0
     // rasterize all the triangles
     for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aXFormTriangleVertexPositions.size()); iTri += 3)
     {
@@ -264,8 +343,10 @@ void outputMeshToImage(
             aTriangleVertexNormals[iTri + 1],
             aTriangleVertexNormals[iTri + 2],
             iImageWidth,
-            iImageHeight);
+            iImageHeight,
+            iTri);
     }
+#endif // 3if 0
 
     // invert depth buffer for better clarity
     std::vector<float4> aDepthBuffer(iImageWidth * iImageWidth);
@@ -314,9 +395,9 @@ void outputMeshToImage(
     std::vector<float3> aFilteredLighting(iImageWidth * iImageHeight);
     std::vector<uint8_t> acFilteredLighting(iImageWidth* iImageHeight * 3);
     int32_t const kiFilterRadius = 1;
-    for(int32_t iY = 0; iY < iImageHeight; iY++)
+    for(int32_t iY = 0; iY < static_cast<int32_t>(iImageHeight); iY++)
     {
-        for(int32_t iX = 0; iX < iImageWidth; iX++)
+        for(int32_t iX = 0; iX < static_cast<int32_t>(iImageWidth); iX++)
         {
             int32_t iImageIndex = iY * iImageWidth + iX;
             aFilteredLighting[iImageIndex] = float3(0.0f, 0.0f, 0.0f);

@@ -1,6 +1,8 @@
 #include "obj_helper.h"
 
+#include <cassert>
 #include <sstream>
+#include <filesystem>
 
 /*
 **
@@ -67,4 +69,114 @@ void writeOBJFile(
     fprintf(fp, "Kd %.4f %.4f %.4f\n", fRand0, fRand1, fRand2);
     fclose(fp);
 
+}
+
+/*
+**
+*/
+void writeTotalClusterOBJ(
+    std::string const& outputTotalClusterFilePath,
+    std::string const& objectName,
+    std::vector<std::vector<float3>> const& aaClusterVertexPositions,
+    std::vector<std::vector<float3>> const& aaClusterVertexNormals,
+    std::vector<std::vector<float2>> const& aaClusterVertexUVs,
+    std::vector<std::vector<uint32_t>> const& aaiClusterTrianglePositionIndices,
+    std::vector<std::vector<uint32_t>> const& aaiClusterTriangleNormalIndices,
+    std::vector<std::vector<uint32_t>> const& aaiClusterTriangleUVIndices)
+{
+    uint32_t iNumTotalVertexPositions = 0;
+    uint32_t iNumTotalVertexNormals = 0;
+    uint32_t iNumTotalVertexUVs = 0;
+
+    auto directoryEnd = outputTotalClusterFilePath.rfind("\\");
+    if(directoryEnd == std::string::npos)
+    {
+        directoryEnd = outputTotalClusterFilePath.rfind("/");
+    }
+    assert(directoryEnd != std::string::npos);
+    std::string directory = outputTotalClusterFilePath.substr(0, directoryEnd);
+    if(!std::filesystem::exists(directory))
+    {
+        std::filesystem::create_directory(directory);
+    }
+
+    FILE* fp = fopen(outputTotalClusterFilePath.c_str(), "wb");
+    fprintf(fp, "o %s\n", objectName.c_str());
+
+    uint32_t iNumClusters = static_cast<uint32_t>(aaClusterVertexPositions.size());
+    for(uint32_t iCluster = 0; iCluster < iNumClusters; iCluster++)
+    {
+        std::ostringstream objectClusterName;
+        objectClusterName << objectName << "-cluster-" << iCluster;
+
+        std::ostringstream objectClusterMaterialName;
+        objectClusterMaterialName << objectClusterName.str();
+
+        fprintf(fp, "g %s\n", objectClusterName.str().c_str());
+
+        {
+            std::string materialOutputFullPath = directory + "\\" + objectClusterMaterialName.str() + ".mtl";
+            FILE* materialFP = fopen(materialOutputFullPath.c_str(), "wb");
+            float fRand0 = static_cast<float>(rand() % 255) / 255.0f;
+            float fRand1 = static_cast<float>(rand() % 255) / 255.0f;
+            float fRand2 = static_cast<float>(rand() % 255) / 255.0f;
+            fprintf(materialFP, "newmtl %s\n", objectClusterMaterialName.str().c_str());
+            fprintf(materialFP, "Kd %.4f %.4f %4f\n", fRand0, fRand1, fRand2);
+            fprintf(materialFP, "Ka %.4f %.4f %4f\n", fRand0, fRand1, fRand2);
+            fprintf(materialFP, "Ks %.4f %.4f %4f\n", fRand0, fRand1, fRand2);
+            fprintf(materialFP, "Ke %.4f %.4f %4f\n", fRand0, fRand1, fRand2);
+            fclose(materialFP);
+
+            fprintf(fp, "mtllib %s\n", materialOutputFullPath.c_str());
+        }
+
+        fprintf(fp, "usemtl %s\n", objectClusterMaterialName.str().c_str());
+        fprintf(fp, "# num positions: %d\n", static_cast<uint32_t>(aaClusterVertexPositions[iCluster].size()));
+        for(uint32_t iPos = 0; iPos < static_cast<uint32_t>(aaClusterVertexPositions[iCluster].size()); iPos++)
+        {
+            fprintf(fp, "v %.4f %.4f %.4f\n",
+                aaClusterVertexPositions[iCluster][iPos].x,
+                aaClusterVertexPositions[iCluster][iPos].y,
+                aaClusterVertexPositions[iCluster][iPos].z);
+        }
+
+        fprintf(fp, "# num normals: %d\n", static_cast<uint32_t>(aaClusterVertexNormals[iCluster].size()));
+        for(uint32_t iNorm = 0; iNorm < static_cast<uint32_t>(aaClusterVertexNormals[iCluster].size()); iNorm++)
+        {
+            fprintf(fp, "vn %.4f %.4f %.4f\n",
+                aaClusterVertexNormals[iCluster][iNorm].x,
+                aaClusterVertexNormals[iCluster][iNorm].y,
+                aaClusterVertexNormals[iCluster][iNorm].z);
+        }
+
+        fprintf(fp, "# num uvs: %d\n", static_cast<uint32_t>(aaClusterVertexUVs[iCluster].size()));
+        for(uint32_t iUV = 0; iUV < static_cast<uint32_t>(aaClusterVertexUVs[iCluster].size()); iUV++)
+        {
+            fprintf(fp, "vt %.4f %.4f\n",
+                aaClusterVertexUVs[iCluster][iUV].x,
+                aaClusterVertexUVs[iCluster][iUV].y);
+        }
+
+        for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aaiClusterTrianglePositionIndices[iCluster].size()); iTri += 3)
+        {
+            fprintf(fp, "f %d/%d/%d %d/%d/%d %d/%d/%d\n",
+                aaiClusterTrianglePositionIndices[iCluster][iTri] + iNumTotalVertexPositions + 1,
+                aaiClusterTriangleUVIndices[iCluster][iTri] + iNumTotalVertexUVs + 1,
+                aaiClusterTriangleNormalIndices[iCluster][iTri] + iNumTotalVertexNormals + 1,
+
+                aaiClusterTrianglePositionIndices[iCluster][iTri + 1] + iNumTotalVertexPositions + 1,
+                aaiClusterTriangleUVIndices[iCluster][iTri + 1] + iNumTotalVertexUVs + 1,
+                aaiClusterTriangleNormalIndices[iCluster][iTri + 1] + iNumTotalVertexNormals + 1,
+
+                aaiClusterTrianglePositionIndices[iCluster][iTri + 2] + iNumTotalVertexPositions + 1,
+                aaiClusterTriangleUVIndices[iCluster][iTri + 2] + iNumTotalVertexUVs + 1,
+                aaiClusterTriangleNormalIndices[iCluster][iTri + 2] + iNumTotalVertexNormals + 1);
+        }
+
+        iNumTotalVertexPositions += static_cast<uint32_t>(aaClusterVertexPositions[iCluster].size());
+        iNumTotalVertexNormals += static_cast<uint32_t>(aaClusterVertexNormals[iCluster].size());
+        iNumTotalVertexUVs += static_cast<uint32_t>(aaClusterVertexUVs[iCluster].size());
+    }
+
+    fclose(fp);
 }

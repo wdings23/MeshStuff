@@ -70,6 +70,36 @@
     <ClCompile Include="utils.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="cluster_tree.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="mesh_cluster.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="test_cluster_streaming.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="boundary_operations.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="simplify_operations.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="metis_operations.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="system_command.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="adjacency_operations.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="vertex_mapping_operations.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="cleanup_operations.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="externals\tinyobjloader\tiny_obj_loader.h">
@@ -114,9 +144,6 @@
     <ClInclude Include="barycentric.h">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="Header.h">
-      <Filter>Source Files</Filter>
-    </ClInclude>
     <ClInclude Include="test.h">
       <Filter>Source Files</Filter>
     </ClInclude>
@@ -141,9 +168,51 @@
     <ClInclude Include="utils.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="rasterizerCUDA.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cluster_tree.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="test_cluster_streaming.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="boundary_operations.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="simplify_operations.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="metis_operations.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="system_command.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="adjacency_operations.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vertex_mapping_operations.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="cleanup_operations.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="float3_lib.cuh">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="adjacency_operations_cuda.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <CudaCompile Include="test.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="rasterizer.cu">
+      <Filter>Source Files</Filter>
+    </CudaCompile>
+    <CudaCompile Include="adjacency_operations.cu">
       <Filter>Source Files</Filter>
     </CudaCompile>
   </ItemGroup>

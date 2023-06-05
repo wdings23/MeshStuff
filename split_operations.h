@@ -53,8 +53,6 @@ bool splitDiscontigousClusters(
     uint32_t iCheckCluster,
     uint32_t iLODLevel);
 
-
-
 void splitCluster(
     std::vector<std::vector<float3>>& aaVertexPositions,
     std::vector<std::vector<float3>>& aaVertexNormals,
@@ -69,3 +67,54 @@ void splitCluster(
     std::vector<uint32_t> const& aiOrigVertexNormalIndices,
     std::vector<uint32_t> const& aiOrigVertexUVIndices,
     uint32_t iMaxTriangles);
+
+void splitClusterGroups(
+    std::vector<std::vector<float3>>& aaClusterVertexPositions,
+    std::vector<std::vector<float3>>& aaClusterVertexNormals,
+    std::vector<std::vector<float2>>& aaClusterVertexUVs,
+    std::vector<std::vector<uint32_t>>& aaiClusterTrianglePositionIndices,
+    std::vector<std::vector<uint32_t>>& aaiClusterTriangleNormalIndices,
+    std::vector<std::vector<uint32_t>>& aaiClusterTriangleUVIndices,
+    uint32_t& iTotalClusterIndex,
+    std::vector<float3> const& aClusterGroupVertexPositions,
+    std::vector<float3> const& aClusterGroupVertexNormals,
+    std::vector<float2> const& aClusterGroupVertexUVs,
+    std::vector<uint32_t> const& aiClusterTrianglePositionIndices,
+    std::vector<uint32_t> const& aiClusterTriangleNormalIndices,
+    std::vector<uint32_t> const& aiClusterTriangleUVIndices,
+    uint32_t iMaxTrianglesPerCluster,
+    uint32_t iNumSplitClusters,
+    uint32_t iLODLevel,
+    uint32_t iClusterGroup,
+    std::string const& meshModelName,
+    std::string const& homeDirectory);
+
+
+void splitLargeClusters(
+    std::vector<std::vector<float3>>& aaClusterVertexPositions,
+    std::vector<std::vector<float3>>& aaClusterVertexNormals,
+    std::vector<std::vector<float2>>& aaClusterVertexUVs,
+    std::vector<std::vector<uint32_t>>& aaiClusterTrianglePositionIndices,
+    std::vector<std::vector<uint32_t>>& aaiClusterTriangleNormalIndices,
+    std::vector<std::vector<uint32_t>>& aaiClusterTriangleUVIndices,
+    uint32_t& iNumClusters,
+    uint32_t& iNumClusterGroups,
+    uint32_t iMaxTrianglesPerCluster,
+    std::string const& meshModelName,
+    std::string const& homeDirectory);
+
+void splitCluster3(
+    std::vector<std::vector<float3>>& aaSplitClusterVertexPositions,
+    std::vector<std::vector<float3>>& aaSplitClusterVertexNormals,
+    std::vector<std::vector<float2>>& aaSplitClusterVertexUVs,
+    std::vector<std::vector<uint32_t>>& aaiSplitClusterTrianglePositionIndices,
+    std::vector<std::vector<uint32_t>>& aaiSplitClusterTriangleNormalIndices,
+    std::vector<std::vector<uint32_t>>& aaiSplitClusterTriangleUVIndices,
+    std::vector<std::vector<float3>> const& aaClusterVertexPositions,
+    std::vector<std::vector<float3>> const& aaClusterVertexNormals,
+    std::vector<std::vector<float2>> const& aaClusterVertexUVs,
+    std::vector<std::vector<uint32_t>> const& aaiClusterTrianglePositionIndices,
+    std::vector<std::vector<uint32_t>> const& aaiClusterTriangleNormalIndices,
+    std::vector<std::vector<uint32_t>> const& aaiClusterTriangleUVIndices,
+    uint32_t iOrigCluster,
+    uint32_t iMaxTrianglesPerCluster);

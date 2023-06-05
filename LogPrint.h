@@ -12,6 +12,7 @@ struct PrintOptions
 //#define DEBUG_PRINTF(...)	{}
 #define DEBUG_PRINTF(...)	printf(__VA_ARGS__)//printOutputToDebugWindow(__VA_ARGS__)
 #define DEBUG_PRINTF2(...)  printf(__VA_ARGS__)
+#define DEBUG_PRINTF_SET_OPTIONS(X)
 #endif // #if _DEBUG
 
 extern "C" int printOutputToDebugWindow(char const* const szFormat, ...);

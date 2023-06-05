@@ -10,7 +10,8 @@ void checkClusterGroupBoundaryVerticesCUDA(
 
 void buildClusterAdjacencyCUDA(
     std::vector<std::vector<uint32_t>>& aaiNumAdjacentVertices,
-    std::vector<std::vector<vec3>> const& aaVertexPositions);
+    std::vector<std::vector<vec3>> const& aaVertexPositions,
+    bool bOnlyEdgeAdjacent);
 
 void getClusterGroupBoundaryVerticesCUDA(
     std::vector<std::vector<uint32_t>>& aaiClusterGroupBoundaryVertices,
@@ -43,8 +44,21 @@ void buildClusterEdgeAdjacencyCUDA(
     std::vector<std::vector<vec3>> const& aaVertexPositions,
     std::vector<std::vector<uint32_t>> const& aaiVertexPositionIndices);
 
+void buildClusterEdgeAdjacencyCUDA2(
+    std::vector<std::vector<std::pair<uint32_t, uint32_t>>>& aaiAdjacentEdgeClusters,
+    std::vector<std::vector<vec3>> const& aaVertexPositions,
+    std::vector<std::vector<uint32_t>> const& aaiVertexPositionIndices);
+
 void getSortedEdgeAdjacentClustersCUDA(
     std::vector<std::vector<uint32_t>>& aaiSortedAdjacentEdgeClusters,
     std::vector<std::vector<vec3>> const& aaVertexPositions,
     std::vector<std::vector<uint32_t>> const& aaiVertexPositionIndices);
 
+void getProjectVertexDistancesCUDA(
+    std::vector<vec3>& aProjectedPositions,
+    std::vector<vec3> const& aTriangleVertexPositions0,
+    std::vector<vec3> const& aTriangleVertexPositions1);
+
+void getClusterGroupBoundaryVerticesCUDA2(
+    std::vector<std::vector<uint32_t>>& aaiClusterGroupBoundaryVertices,
+    std::vector<std::vector<vec3>> const& aaClusterGroupVertexPositions);

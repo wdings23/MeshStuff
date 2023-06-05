@@ -2,6 +2,7 @@
 #include <assert.h>
 
 #include <sstream>
+#include <map>
 
 #include "obj_helper.h"
 #include "LogPrint.h"
@@ -282,7 +283,7 @@ bool moveTriangles(
                     continue;
                 }
 
-                float3 aSamePos[3];
+                float3 aSamePos[32];
                 uint32_t iNumSamePos = 0;
                 for(uint32_t i = 0; i < 3; i++)
                 {
@@ -294,13 +295,16 @@ bool moveTriangles(
                         float3 const& checkPos = aaVertexPositions[iSrcCluster][iCheckPos];
                         if(lengthSquared(checkPos - pos) <= 1.0e-7f)
                         {
-                            aSamePos[iNumSamePos++] = checkPos;
+                            if(iNumSamePos < 3)
+                            {
+                                aSamePos[iNumSamePos++] = checkPos;
+                            }
                         }
                     }
                 }
 
                 // shared an edge, add to cluster
-                if(iNumSamePos >= 2)
+                if(iNumSamePos >= 1)
                 {
                     addTriangle(
                         aaNewVertexPositions,
@@ -401,6 +405,7 @@ bool moveTriangles(
 
     assert(aaiVertexPositionIndices.size() == aaiVertexNormalIndices.size());
 
+#if 0
     for(uint32_t i = 0; i < static_cast<uint32_t>(aaNewVertexPositions.size()); i++)
     {
         assert(aaiVertexPositionIndices[i].size() == aaiVertexNormalIndices[i].size());
@@ -422,8 +427,104 @@ bool moveTriangles(
             outputClusterFilePath.str(),
             clusterName.str());
     }
+#endif // #if 0
 
     return iNumAddedTriangleVertices > 0;
+}
+
+/*
+**
+*/
+void getCandidateClusters(
+    std::vector<std::vector<float3>> aaVertexPositionsCopy,
+    std::vector<std::vector<float3>> aaVertexNormalsCopy,
+    std::vector<std::vector<float2>> aaVertexUVsCopy,
+    std::vector<std::vector<uint32_t>> aaiVertexPositionIndicesCopy,
+    std::vector<std::vector<uint32_t>> aaiVertexNormalIndicesCopy,
+    std::vector<std::vector<uint32_t>> aaiVertexUVIndicesCopy,
+    std::vector<std::vector<float3>> const& aaVertexPositions,
+    std::vector<std::vector<float3>> const& aaVertexNormals,
+    std::vector<std::vector<float2>> const& aaVertexUVs,
+    std::vector<std::vector<uint32_t>> const& aaiVertexPositionIndices,
+    std::vector<std::vector<uint32_t>> const& aaiVertexNormalIndices,
+    std::vector<std::vector<uint32_t>> const& aaiVertexUVIndices,
+    uint32_t iSrcCluster,
+    uint32_t kiMaxTriangleVertices)
+{
+    struct DestClusterInfo
+    {
+        uint32_t        miIndex;
+        uint32_t        miNumPositionIndices;
+        uint32_t        miNumSharedPositions;
+        std::vector<std::pair<uint32_t, uint32_t>>  maSharedTriangles;
+    };
+
+    std::map<uint32_t, DestClusterInfo> aCandidateDestClusters;
+    for(uint32_t iMergeTri = 0; iMergeTri < static_cast<uint32_t>(aaiVertexPositionIndices[iSrcCluster].size()); iMergeTri += 3)
+    {
+        for(uint32_t iDestCluster = 0; iDestCluster < static_cast<uint32_t>(aaiVertexPositionIndices.size()); iDestCluster++)
+        {
+            if(iDestCluster == iSrcCluster)
+            {
+                continue;
+            }
+
+            if(aaiVertexPositionIndicesCopy[iDestCluster].size() <= kiMaxTriangleVertices - aaiVertexPositionIndices[iSrcCluster].size())
+            {
+                for(uint32_t iCheckTri = 0; iCheckTri < static_cast<uint32_t>(aaiVertexPositionIndicesCopy[iDestCluster].size()); iCheckTri += 3)
+                {
+                    // check same position
+                    float3 aSamePos[32];
+                    uint32_t iNumSamePos = 0;
+                    for(uint32_t i = 0; i < 3; i++)
+                    {
+                        uint32_t iPos = aaiVertexPositionIndices[iSrcCluster][iMergeTri + i];
+                        float3 const& pos = aaVertexPositions[iSrcCluster][iPos];
+                        for(uint32_t j = 0; j < 3; j++)
+                        {
+                            uint32_t iCheckPos = aaiVertexPositionIndicesCopy[iDestCluster][iCheckTri + j];
+                            float3 const& checkPos = aaVertexPositionsCopy[iDestCluster][iCheckPos];
+                            if(lengthSquared(checkPos - pos) <= 1.0e-9f)
+                            {
+                                if(iNumSamePos < 3)
+                                {
+                                    aSamePos[iNumSamePos++] = checkPos;
+                                }
+                            }
+                        }
+                    }
+
+                    // share at least an edge
+                    if(iNumSamePos >= 2)
+                    {
+                        if(aCandidateDestClusters.find(iDestCluster) == aCandidateDestClusters.end())
+                        {
+                            DestClusterInfo destClusterInfo;
+                            destClusterInfo.miIndex = iDestCluster;
+                            destClusterInfo.miNumPositionIndices = static_cast<uint32_t>(aaiVertexPositionIndicesCopy[iDestCluster].size());
+                            destClusterInfo.miNumSharedPositions = iNumSamePos;
+                            destClusterInfo.maSharedTriangles.push_back(std::make_pair(iMergeTri, iCheckTri));
+                            aCandidateDestClusters[iDestCluster] = destClusterInfo;
+                        }
+                        else
+                        {
+                            // add shared triangle and update shared position if > before
+                            if(aCandidateDestClusters[iDestCluster].miNumSharedPositions < iNumSamePos)
+                            {
+                                aCandidateDestClusters[iDestCluster].miNumSharedPositions = iNumSamePos;
+                            }
+                            aCandidateDestClusters[iDestCluster].maSharedTriangles.push_back(std::make_pair(iMergeTri, iCheckTri));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if(aCandidateDestClusters.size() > 0)
+    {
+        int iDebug = 1;
+    }
 }
 
 /*
@@ -438,7 +539,7 @@ bool mergeTriangles(
     std::vector<std::vector<uint32_t>>& aaiVertexUVIndices,
     uint32_t iSrcCluster)
 {
-    DEBUG_PRINTF("try to merge cluster %d size: %d\n", iSrcCluster, aaiVertexPositionIndices.size());
+    //DEBUG_PRINTF("try to merge cluster %d size: %d\n", iSrcCluster, aaiVertexPositionIndices.size());
 
     std::vector<uint32_t> aiMerged(aaiVertexPositionIndices[iSrcCluster].size() / 3);
     memset(aiMerged.data(), 0, aiMerged.size() * sizeof(uint32_t));
@@ -452,156 +553,189 @@ bool mergeTriangles(
 
     uint32_t const kiMaxTriangleVertices = 128 * 3;
     uint32_t iDestCluster = 0;
-    for(uint32_t iMergeTri = 0; iMergeTri < static_cast<uint32_t>(aaiVertexPositionIndices[iSrcCluster].size()); iMergeTri += 3)
+
+    //getCandidateClusters(
+    //    aaVertexPositionsCopy,
+    //    aaVertexNormalsCopy,
+    //    aaVertexUVsCopy,
+    //    aaiVertexPositionIndicesCopy,
+    //    aaiVertexNormalIndicesCopy,
+    //    aaiVertexUVIndicesCopy,
+    //    aaVertexPositions,
+    //    aaVertexNormals,
+    //    aaVertexUVs,
+    //    aaiVertexPositionIndices,
+    //    aaiVertexNormalIndices,
+    //    aaiVertexUVIndices,
+    //    iSrcCluster,
+    //    kiMaxTriangleVertices);
+
+    for(uint32_t iLoop = 0; iLoop < 100; iLoop++)
     {
-        for(iDestCluster = 0; iDestCluster < static_cast<uint32_t>(aaiVertexPositionIndices.size()); iDestCluster++)
+        for(uint32_t iMergeTri = 0; iMergeTri < static_cast<uint32_t>(aaiVertexPositionIndices[iSrcCluster].size()); iMergeTri += 3)
         {
-            if(iDestCluster == iSrcCluster)
+            for(iDestCluster = 0; iDestCluster < static_cast<uint32_t>(aaiVertexPositionIndices.size()); iDestCluster++)
             {
-                continue;
-            }
-
-            if(aaiVertexPositionIndicesCopy[iDestCluster].size() <= kiMaxTriangleVertices - aaiVertexPositionIndices[iSrcCluster].size())
-            {
-                for(uint32_t iCheckTri = 0; iCheckTri < static_cast<uint32_t>(aaiVertexPositionIndicesCopy[iDestCluster].size()); iCheckTri += 3)
+                if(iDestCluster == iSrcCluster)
                 {
-                    float3 aSamePos[3];
-                    uint32_t iNumSamePos = 0;
-                    for(uint32_t i = 0; i < 3; i++)
-                    {
-                        uint32_t iPos = aaiVertexPositionIndices[iSrcCluster][iMergeTri + i];
-                        float3 const& pos = aaVertexPositions[iSrcCluster][iPos];
-                        for(uint32_t j = 0; j < 3; j++)
-                        {
-                            uint32_t iCheckPos = aaiVertexPositionIndicesCopy[iDestCluster][iCheckTri + j];
-                            float3 const& checkPos = aaVertexPositionsCopy[iDestCluster][iCheckPos];
-                            if(lengthSquared(checkPos - pos) <= 1.0e-9f)
-                            {
-                                aSamePos[iNumSamePos++] = checkPos;
-                            }
-                        }
-                    }
-
-                    float3 aAddedPos[3];
-                    uint32_t aiAddedIndices[3];
-                    if(iNumSamePos >= 2)
-                    {
-                        for(uint32_t i = 0; i < 3; i++)
-                        {
-                            // position
-                            {
-                                uint32_t iIndex = UINT32_MAX;
-                                uint32_t iPos = aaiVertexPositionIndices[iSrcCluster][iMergeTri + i];
-                                float3 const& pos = aaVertexPositions[iSrcCluster][iPos];
-                                auto iter = std::find_if(
-                                    aaVertexPositionsCopy[iDestCluster].begin(),
-                                    aaVertexPositionsCopy[iDestCluster].end(),
-                                    [pos](float3 const& checkPos)
-                                    {
-                                        return lengthSquared(pos - checkPos) <= 1.0e-7f;
-                                    });
-                                if(iter == aaVertexPositionsCopy[iDestCluster].end())
-                                {
-                                    aaVertexPositionsCopy[iDestCluster].push_back(pos);
-                                    aAddedPos[i] = pos;
-                                    iIndex = static_cast<uint32_t>(aaVertexPositionsCopy[iDestCluster].size() - 1);
-                                }
-                                else
-                                {
-                                    iIndex = static_cast<uint32_t>(std::distance(aaVertexPositionsCopy[iDestCluster].begin(), iter));
-                                    aAddedPos[i] = aaVertexPositionsCopy[iDestCluster][iIndex];
-                                }
-                                assert(iIndex != UINT32_MAX);
-                                assert(iIndex <= aaVertexPositionsCopy[iDestCluster].size());
-                                aaiVertexPositionIndicesCopy[iDestCluster].push_back(iIndex);
-                                aiAddedIndices[i] = iIndex;
-                            }
-
-                            // normal
-                            {
-                                uint32_t iIndex = UINT32_MAX;
-                                uint32_t iPos = aaiVertexNormalIndices[iSrcCluster][iMergeTri + i];
-                                float3 const& pos = aaVertexNormals[iSrcCluster][iPos];
-                                auto iter = std::find_if(
-                                    aaVertexNormalsCopy[iDestCluster].begin(),
-                                    aaVertexNormalsCopy[iDestCluster].end(),
-                                    [pos](float3 const& checkPos)
-                                    {
-                                        return lengthSquared(pos - checkPos) <= 1.0e-7f;
-                                    });
-                                if(iter == aaVertexNormalsCopy[iDestCluster].end())
-                                {
-                                    aaVertexNormalsCopy[iDestCluster].push_back(pos);
-                                    iIndex = static_cast<uint32_t>(aaVertexNormalsCopy[iDestCluster].size() - 1);
-                                }
-                                else
-                                {
-                                    iIndex = static_cast<uint32_t>(std::distance(aaVertexNormalsCopy[iDestCluster].begin(), iter));
-                                }
-                                assert(iIndex != UINT32_MAX);
-                                assert(iIndex <= aaVertexNormalsCopy[iDestCluster].size());
-                                aaiVertexNormalIndicesCopy[iDestCluster].push_back(iIndex);
-                            }
-
-                            // uv
-                            {
-                                uint32_t iIndex = UINT32_MAX;
-                                uint32_t iPos = aaiVertexUVIndices[iSrcCluster][iMergeTri + i];
-                                float2 const& pos = aaVertexUVs[iSrcCluster][iPos];
-                                auto iter = std::find_if(
-                                    aaVertexUVsCopy[iDestCluster].begin(),
-                                    aaVertexUVsCopy[iDestCluster].end(),
-                                    [pos](float2 const& checkPos)
-                                    {
-                                        return lengthSquared(pos - checkPos) <= 1.0e-7f;
-                                    });
-                                if(iter == aaVertexUVsCopy[iDestCluster].end())
-                                {
-                                    aaVertexUVsCopy[iDestCluster].push_back(pos);
-                                    iIndex = static_cast<uint32_t>(aaVertexUVsCopy[iDestCluster].size() - 1);
-                                }
-                                else
-                                {
-                                    iIndex = static_cast<uint32_t>(std::distance(aaVertexUVsCopy[iDestCluster].begin(), iter));
-                                }
-                                assert(iIndex != UINT32_MAX);
-                                assert(iIndex <= aaVertexUVsCopy[iDestCluster].size());
-                                aaiVertexUVIndicesCopy[iDestCluster].push_back(iIndex);
-
-                            }
-
-                        }   // for i = 0 to 3
-
-                        DEBUG_PRINTF("merge triangleID %d from cluster %d to cluster %d triangle (%d, %d, %d)\n",
-                            iMergeTri / 3,
-                            iSrcCluster,
-                            iDestCluster,
-                            aiAddedIndices[0],
-                            aiAddedIndices[1], 
-                            aiAddedIndices[2]);
-
-                        aiMerged[iMergeTri / 3] = 1;
-                        break;
-
-                    }   // if share edge
-
-                }   // for check tri = 0 to num dest triangles
-
-                if(aiMerged[iMergeTri / 3])
-                {
-                    break;
+                    continue;
                 }
 
-            }   // if dest cluster can hold the triangles
+                if(aaiVertexPositionIndicesCopy[iDestCluster].size() <= kiMaxTriangleVertices - aaiVertexPositionIndices[iSrcCluster].size())
+                {
+                    for(uint32_t iCheckTri = 0; iCheckTri < static_cast<uint32_t>(aaiVertexPositionIndicesCopy[iDestCluster].size()); iCheckTri += 3)
+                    {
+                        float3 aSamePos[32];
+                        uint32_t iNumSamePos = 0;
+                        for(uint32_t i = 0; i < 3; i++)
+                        {
+                            uint32_t iPos = aaiVertexPositionIndices[iSrcCluster][iMergeTri + i];
+                            float3 const& pos = aaVertexPositions[iSrcCluster][iPos];
+                            for(uint32_t j = 0; j < 3; j++)
+                            {
+                                uint32_t iCheckPos = aaiVertexPositionIndicesCopy[iDestCluster][iCheckTri + j];
+                                float3 const& checkPos = aaVertexPositionsCopy[iDestCluster][iCheckPos];
+                                if(lengthSquared(checkPos - pos) <= 1.0e-9f)
+                                {
+                                    if(iNumSamePos < 3)
+                                    {
+                                        aSamePos[iNumSamePos++] = checkPos;
+                                    }
+                                }
+                            }
+                        }
 
-        }   // for dest cluster to num clusters
-    
-        if(aiMerged[iMergeTri / 3] == 0)
+                        float3 aAddedPos[3];
+                        uint32_t aiAddedIndices[3];
+                        if(iNumSamePos >= 1)
+                        {
+                            for(uint32_t i = 0; i < 3; i++)
+                            {
+                                // position
+                                {
+                                    uint32_t iIndex = UINT32_MAX;
+                                    uint32_t iPos = aaiVertexPositionIndices[iSrcCluster][iMergeTri + i];
+                                    float3 const& pos = aaVertexPositions[iSrcCluster][iPos];
+                                    auto iter = std::find_if(
+                                        aaVertexPositionsCopy[iDestCluster].begin(),
+                                        aaVertexPositionsCopy[iDestCluster].end(),
+                                        [pos](float3 const& checkPos)
+                                        {
+                                            return lengthSquared(pos - checkPos) <= 1.0e-7f;
+                                        });
+                                    if(iter == aaVertexPositionsCopy[iDestCluster].end())
+                                    {
+                                        aaVertexPositionsCopy[iDestCluster].push_back(pos);
+                                        aAddedPos[i] = pos;
+                                        iIndex = static_cast<uint32_t>(aaVertexPositionsCopy[iDestCluster].size() - 1);
+                                    }
+                                    else
+                                    {
+                                        iIndex = static_cast<uint32_t>(std::distance(aaVertexPositionsCopy[iDestCluster].begin(), iter));
+                                        aAddedPos[i] = aaVertexPositionsCopy[iDestCluster][iIndex];
+                                    }
+                                    assert(iIndex != UINT32_MAX);
+                                    assert(iIndex <= aaVertexPositionsCopy[iDestCluster].size());
+                                    aaiVertexPositionIndicesCopy[iDestCluster].push_back(iIndex);
+                                    aiAddedIndices[i] = iIndex;
+                                }
+
+                                // normal
+                                {
+                                    uint32_t iIndex = UINT32_MAX;
+                                    uint32_t iPos = aaiVertexNormalIndices[iSrcCluster][iMergeTri + i];
+                                    float3 const& pos = aaVertexNormals[iSrcCluster][iPos];
+                                    auto iter = std::find_if(
+                                        aaVertexNormalsCopy[iDestCluster].begin(),
+                                        aaVertexNormalsCopy[iDestCluster].end(),
+                                        [pos](float3 const& checkPos)
+                                        {
+                                            return lengthSquared(pos - checkPos) <= 1.0e-7f;
+                                        });
+                                    if(iter == aaVertexNormalsCopy[iDestCluster].end())
+                                    {
+                                        aaVertexNormalsCopy[iDestCluster].push_back(pos);
+                                        iIndex = static_cast<uint32_t>(aaVertexNormalsCopy[iDestCluster].size() - 1);
+                                    }
+                                    else
+                                    {
+                                        iIndex = static_cast<uint32_t>(std::distance(aaVertexNormalsCopy[iDestCluster].begin(), iter));
+                                    }
+                                    assert(iIndex != UINT32_MAX);
+                                    assert(iIndex <= aaVertexNormalsCopy[iDestCluster].size());
+                                    aaiVertexNormalIndicesCopy[iDestCluster].push_back(iIndex);
+                                }
+
+                                // uv
+                                {
+                                    uint32_t iIndex = UINT32_MAX;
+                                    uint32_t iPos = aaiVertexUVIndices[iSrcCluster][iMergeTri + i];
+                                    float2 const& pos = aaVertexUVs[iSrcCluster][iPos];
+                                    auto iter = std::find_if(
+                                        aaVertexUVsCopy[iDestCluster].begin(),
+                                        aaVertexUVsCopy[iDestCluster].end(),
+                                        [pos](float2 const& checkPos)
+                                        {
+                                            return lengthSquared(pos - checkPos) <= 1.0e-7f;
+                                        });
+                                    if(iter == aaVertexUVsCopy[iDestCluster].end())
+                                    {
+                                        aaVertexUVsCopy[iDestCluster].push_back(pos);
+                                        iIndex = static_cast<uint32_t>(aaVertexUVsCopy[iDestCluster].size() - 1);
+                                    }
+                                    else
+                                    {
+                                        iIndex = static_cast<uint32_t>(std::distance(aaVertexUVsCopy[iDestCluster].begin(), iter));
+                                    }
+                                    assert(iIndex != UINT32_MAX);
+                                    assert(iIndex <= aaVertexUVsCopy[iDestCluster].size());
+                                    aaiVertexUVIndicesCopy[iDestCluster].push_back(iIndex);
+
+                                }
+
+                            }   // for i = 0 to 3
+
+                            //DEBUG_PRINTF("merge triangleID %d from cluster %d to cluster %d triangle (%d, %d, %d)\n",
+                            //    iMergeTri / 3,
+                            //    iSrcCluster,
+                            //    iDestCluster,
+                            //    aiAddedIndices[0],
+                            //    aiAddedIndices[1],
+                            //    aiAddedIndices[2]);
+
+                            aiMerged[iMergeTri / 3] = 1;
+                            break;
+
+                        }   // if share edge
+
+                    }   // for check tri = 0 to num dest triangles
+
+                    if(aiMerged[iMergeTri / 3])
+                    {
+                        break;
+                    }
+
+                }   // if dest cluster can hold the triangles
+
+            }   // for dest cluster to num clusters
+
+            //if(aiMerged[iMergeTri / 3] == 0)
+            //{
+            //    DEBUG_PRINTF("did not merge triangleID %d\n", iMergeTri / 3);
+            //}
+
+        }   // for tri = 0 to num src triangles
+        
+        // check if merged all the triangles
+        auto iter = std::find(aiMerged.begin(), aiMerged.end(), 0);
+        if(iter == aiMerged.end())
         {
-            DEBUG_PRINTF("did not merge triangleID %d\n", iMergeTri / 3);
+            break;
         }
 
-    }   // for tri = 0 to num src triangles
+        int iDebug = 1;
+
+    }   // for loop = 0 to 1000
 
     auto iter = std::find(aiMerged.begin(), aiMerged.end(), 0);
     if(iter == aiMerged.end())
@@ -622,12 +756,198 @@ bool mergeTriangles(
         aaiVertexNormalIndices = aaiVertexNormalIndicesCopy;
         aaiVertexUVIndices = aaiVertexUVIndicesCopy;
 
-        DEBUG_PRINTF("!!! successfully merged cluster %d\n", iSrcCluster);
+        //DEBUG_PRINTF("!!! successfully merged cluster %d\n", iSrcCluster);
     }
     else
     {
-        DEBUG_PRINTF("!!! did not merge cluster %d\n", iSrcCluster);
+        //DEBUG_PRINTF("!!! did not merge cluster %d\n", iSrcCluster);
     }
 
     return (iter == aiMerged.end());
+}
+
+/*
+**
+*/
+void moveVertices(
+    std::vector<float3>& aDestClusterVertexPositions,
+    std::vector<float3>& aDestClusterVertexNormals,
+    std::vector<float2>& aDestClusterVertexUVs,
+    std::vector<uint32_t>& aiDestClusterPositionIndices,
+    std::vector<uint32_t>& aiDestClusterNormalIndices,
+    std::vector<uint32_t>& aiDestClusterUVIndices,
+    std::vector<float3> const& aSrcClusterVertexPositions,
+    std::vector<float3> const& aSrcClusterVertexNormals,
+    std::vector<float2> const& aSrcClusterVertexUVs,
+    std::vector<uint32_t> const& aiSrcClusterPositionIndices,
+    std::vector<uint32_t> const& aiSrcClusterNormalIndices,
+    std::vector<uint32_t> const& aiSrcClusterUVIndices,
+    uint32_t iSrcCluster,
+    uint32_t iDestCluster)
+{
+    {
+        FILE* fp = fopen("c:\\Users\\Dingwings\\demo-models\\debug-output\\src.obj", "wb");
+        fprintf(fp, "g orig-cluster\n");
+        for(auto const& pos : aSrcClusterVertexPositions)
+        {
+            fprintf(fp, "v %.4f %.4f %.4f\n",
+                pos.x, pos.y, pos.z);
+        }
+        for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aiSrcClusterPositionIndices.size()); iTri += 3)
+        {
+            uint32_t const& iPos0 = aiSrcClusterPositionIndices[iTri];
+            uint32_t const& iPos1 = aiSrcClusterPositionIndices[iTri + 1];
+            uint32_t const& iPos2 = aiSrcClusterPositionIndices[iTri + 2];
+            fprintf(fp, "f %d// %d// %d//\n", iPos0 + 1, iPos1 + 1, iPos2 + 1);
+        }
+        fclose(fp);
+
+        FILE* fp1 = fopen("c:\\Users\\Dingwings\\demo-models\\debug-output\\dest.obj", "wb");
+        fprintf(fp1, "g orig-cluster\n");
+        for(auto const& pos : aDestClusterVertexPositions)
+        {
+            fprintf(fp1, "v %.4f %.4f %.4f\n",
+                pos.x, pos.y, pos.z);
+        }
+        for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aiDestClusterPositionIndices.size()); iTri += 3)
+        {
+            uint32_t const& iPos0 = aiDestClusterPositionIndices[iTri];
+            uint32_t const& iPos1 = aiDestClusterPositionIndices[iTri + 1];
+            uint32_t const& iPos2 = aiDestClusterPositionIndices[iTri + 2];
+            fprintf(fp1, "f %d// %d// %d//\n", iPos0 + 1, iPos1 + 1, iPos2 + 1);
+        }
+        fclose(fp1);
+
+    }
+
+    // add positions
+    for(auto const& position : aSrcClusterVertexPositions)
+    {
+        auto iter = std::find_if(
+            aDestClusterVertexPositions.begin(),
+            aDestClusterVertexPositions.end(),
+            [position](float3 const& checkPosition)
+            {
+                return lengthSquared(position - checkPosition) <= 1.0e-8f;
+            }
+        );
+
+        if(iter == aDestClusterVertexPositions.end())
+        {
+            aDestClusterVertexPositions.push_back(position);
+        }
+    }
+
+    // add normals
+    for(auto const& normal : aSrcClusterVertexNormals)
+    {
+        auto iter = std::find_if(
+            aDestClusterVertexNormals.begin(),
+            aDestClusterVertexNormals.end(),
+            [normal](float3 const& checkNormal)
+            {
+                return lengthSquared(normal - checkNormal) <= 1.0e-8f;
+            }
+        );
+
+        if(iter == aDestClusterVertexNormals.end())
+        {
+            aDestClusterVertexNormals.push_back(normal);
+        }
+    }
+
+    // add uv
+    for(auto const& uv : aSrcClusterVertexUVs)
+    {
+        auto iter = std::find_if(
+            aDestClusterVertexUVs.begin(),
+            aDestClusterVertexUVs.end(),
+            [uv](float2 const& checkUV)
+            {
+                return lengthSquared(uv - checkUV) <= 1.0e-8f;
+            }
+        );
+
+        if(iter == aDestClusterVertexUVs.end())
+        {
+            aDestClusterVertexUVs.push_back(uv);
+        }
+    }
+
+    // add new triangle position indices
+    for(uint32_t iSrcPos = 0; iSrcPos < static_cast<uint32_t>(aiSrcClusterPositionIndices.size()); iSrcPos++)
+    {
+        uint32_t iPos = aiSrcClusterPositionIndices[iSrcPos];
+        float3 const& pos = aSrcClusterVertexPositions[iPos];
+        auto iter = std::find_if(
+            aDestClusterVertexPositions.begin(),
+            aDestClusterVertexPositions.end(),
+            [pos](auto const& checkPos)
+            {
+                return lengthSquared(pos - checkPos) <= 1.0e-8f;
+            }
+        );
+
+        assert(iter != aDestClusterVertexPositions.end());
+        uint32_t iIndex = static_cast<uint32_t>(std::distance(aDestClusterVertexPositions.begin(), iter));
+        aiDestClusterPositionIndices.push_back(iIndex);
+    }
+
+    // add new triangle normal indices
+    for(uint32_t iSrcNorm = 0; iSrcNorm < static_cast<uint32_t>(aiSrcClusterNormalIndices.size()); iSrcNorm++)
+    {
+        uint32_t iNorm = aiSrcClusterNormalIndices[iSrcNorm];
+        float3 const& norm = aSrcClusterVertexNormals[iNorm];
+        auto iter = std::find_if(
+            aDestClusterVertexNormals.begin(),
+            aDestClusterVertexNormals.end(),
+            [norm](auto const& checkPos)
+            {
+                return lengthSquared(norm - checkPos) <= 1.0e-8f;
+            }
+        );
+
+        assert(iter != aDestClusterVertexNormals.end());
+        uint32_t iIndex = static_cast<uint32_t>(std::distance(aDestClusterVertexNormals.begin(), iter));
+        aiDestClusterNormalIndices.push_back(iIndex);
+    }
+
+    // add new triangle uv indices
+    for(uint32_t iSrcUV = 0; iSrcUV < static_cast<uint32_t>(aiSrcClusterUVIndices.size()); iSrcUV++)
+    {
+        uint32_t iNorm = aiSrcClusterUVIndices[iSrcUV];
+        float2 const& uv = aSrcClusterVertexUVs[iNorm];
+        auto iter = std::find_if(
+            aDestClusterVertexUVs.begin(),
+            aDestClusterVertexUVs.end(),
+            [uv](auto const& checkUV)
+            {
+                return lengthSquared(uv - checkUV) <= 1.0e-8f;
+            }
+        );
+
+        assert(iter != aDestClusterVertexUVs.end());
+        uint32_t iIndex = static_cast<uint32_t>(std::distance(aDestClusterVertexUVs.begin(), iter));
+        aiDestClusterUVIndices.push_back(iIndex);
+    }
+
+    {
+        FILE* fp = fopen("c:\\Users\\Dingwings\\demo-models\\debug-output\\merged.obj", "wb");
+        fprintf(fp, "g orig-cluster\n");
+        for(auto const& pos : aDestClusterVertexPositions)
+        {
+            fprintf(fp, "v %.4f %.4f %.4f\n",
+                pos.x, pos.y, pos.z);
+        }
+        for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aiDestClusterPositionIndices.size()); iTri += 3)
+        {
+            uint32_t const& iPos0 = aiDestClusterPositionIndices[iTri];
+            uint32_t const& iPos1 = aiDestClusterPositionIndices[iTri + 1];
+            uint32_t const& iPos2 = aiDestClusterPositionIndices[iTri + 2];
+            fprintf(fp, "f %d// %d// %d//\n", iPos0 + 1, iPos1 + 1, iPos2 + 1);
+        }
+        fclose(fp);
+        int iDebug = 1;
+    }
+
 }

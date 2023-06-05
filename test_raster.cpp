@@ -9,278 +9,13 @@
 #include "LogPrint.h"
 #include "utils.h"
 
+#include "rasterizerCUDA.h"
+
 #include "tinyexr/tinyexr.h"
 #include "stb_image_write.h"
 
 #include <assert.h>
-
-/*
-**
-*/
-uint32_t getMeshClusterGroupAddress(
-    std::vector<uint8_t>& meshClusterGroupBuffer,
-    uint32_t iLODLevel,
-    uint32_t iClusterGroup)
-{
-    uint32_t iOffset = 0;
-    uint8_t* pAddress = reinterpret_cast<uint8_t*>(meshClusterGroupBuffer.data());
-    for(;;)
-    {
-        MeshClusterGroup const* pMeshClusterGroup = reinterpret_cast<MeshClusterGroup const*>(pAddress + iOffset);
-        if(pMeshClusterGroup->miLODLevel == iLODLevel)
-        {
-            iOffset += iClusterGroup * sizeof(MeshClusterGroup);
-            break;
-        }
-
-        iOffset += sizeof(MeshClusterGroup);
-    }
-
-    return iOffset / sizeof(MeshClusterGroup);
-}
-
-/*
-**
-*/
-uint32_t getMeshClusterAddress(
-    std::vector<uint8_t>& meshClusterBuffer,
-    uint32_t iLODLevel,
-    uint32_t iCluster)
-{
-    uint32_t iOffset = 0;
-    uint8_t* pAddress = reinterpret_cast<uint8_t*>(meshClusterBuffer.data());
-    for(;;)
-    {
-        MeshCluster const* pMeshCluster = reinterpret_cast<MeshCluster const*>(pAddress + iOffset);
-        if(pMeshCluster->miLODLevel == iLODLevel)
-        {
-            iOffset += iCluster * sizeof(MeshCluster);
-            break;
-        }
-
-        iOffset += sizeof(MeshCluster);
-    }
-
-    return iOffset / sizeof(MeshCluster);
-}
-
-
-
-/*
-**
-*/
-void createTreeNodes(
-    std::vector<ClusterTreeNode>& aNodes,
-    uint32_t iNumLODLevels,
-    std::vector<uint8_t>& aMeshClusterData,
-    std::vector<uint8_t>& aMeshClusterGroupData,
-    std::vector<std::vector<MeshClusterGroup>> const& aaMeshClusterGroups,
-    std::vector<std::vector<MeshCluster>> const& aaMeshClusters)
-{
-    uint32_t iCurrNumClusters = 0;
-    for(int32_t iLODLevel = static_cast<int32_t>(iNumLODLevels) - 1; iLODLevel >= 0; iLODLevel--)
-    {
-        for(uint32_t iCluster = 0; iCluster < static_cast<uint32_t>(aaMeshClusters[iLODLevel].size()); iCluster++)
-        {
-            uint32_t iNumChildren = 0;
-            ClusterTreeNode node;
-            node.miLevel = iNumLODLevels - iLODLevel;
-            node.miClusterAddress = iCurrNumClusters;
-            node.miNumChildren = 0;
-            ++iCurrNumClusters;
-
-            auto const& cluster = aaMeshClusters[iLODLevel][iCluster];
-            uint32_t iClusterGroup = iCluster / 2;
-
-            node.miClusterGroupAddress = getMeshClusterGroupAddress(
-                aMeshClusterGroupData,
-                iLODLevel, 
-                iClusterGroup);
-
-            if(iLODLevel > 0)
-            {
-                for(uint32_t i = 0; i < static_cast<uint32_t>(aaMeshClusters[iLODLevel - 1].size()); i++)
-                {
-                    if(aaMeshClusters[iLODLevel - 1][i].miClusterGroup == iClusterGroup)
-                    {
-                        node.maiChildrenAddress[node.miNumChildren] = getMeshClusterAddress(
-                            aMeshClusterData,
-                            iLODLevel - 1, 
-                            i);
-                        ++node.miNumChildren;
-                    }
-                }
-            }
-
-            aNodes.push_back(node);
-        }
-    }
-}
-
-/*
-**
-*/
-void createTreeNodes2(
-    std::vector<ClusterTreeNode>& aNodes,
-    uint32_t iNumLODLevels,
-    std::vector<uint8_t>& aMeshClusterData,
-    std::vector<uint8_t>& aMeshClusterGroupData,
-    std::vector<std::vector<MeshClusterGroup>> const& aaMeshClusterGroups,
-    std::vector<std::vector<MeshCluster>> const& aaMeshClusters,
-    std::vector<std::pair<float3, float3>> const& aTotalMaxClusterDistancePositionFromLOD0)
-{
-    std::vector<uint32_t> aiStartClusterGroupIndex(iNumLODLevels);
-    memset(aiStartClusterGroupIndex.data(), 0, iNumLODLevels * sizeof(uint32_t));
-    uint32_t iCurrTotalClusters = 0;
-    for(uint32_t iLOD = 0; iLOD < iNumLODLevels; iLOD++)
-    {
-        aiStartClusterGroupIndex[iLOD] = iCurrTotalClusters;
-        iCurrTotalClusters += static_cast<uint32_t>(aaMeshClusterGroups[iLOD].size());
-    }
-
-    uint32_t iCurrLevel = iNumLODLevels;
-    for(int32_t iLODLevel = static_cast<int32_t>(iNumLODLevels - 1); iLODLevel >= 0; iLODLevel--)
-    {
-        uint32_t iNumClusterGroups = static_cast<uint32_t>(aaMeshClusterGroups[iLODLevel].size());
-        for(uint32_t iClusterGroup = 0; iClusterGroup < iNumClusterGroups; iClusterGroup++)
-        {
-            // use MIP 1 of LOD - 1 as the cluster group
-            for(int32_t iMIP = 1; iMIP >= 0; iMIP--)
-            {
-                if(iMIP == 0 && iLODLevel > 0)
-                {
-                    break;
-                }
-
-                // create node with children cluster
-                MeshClusterGroup const& clusterGroup = aaMeshClusterGroups[iLODLevel][iClusterGroup];
-                ClusterTreeNode node;
-                //node.miLevel = (iLODLevel == 0) ? iLODLevel + iMIP : iLODLevel; // use MIP 1 from LOD > 0, MIP 0 for LOD 0
-                node.miLevel = (iMIP == 0) ? iCurrLevel - 1 : iCurrLevel;
-                uint32_t iNumClusters = clusterGroup.maiNumClusters[iMIP];
-                for(uint32_t iCluster = 0; iCluster < iNumClusters; iCluster++)
-                {
-                    uint32_t iClusterID = clusterGroup.maiClusters[iMIP][iCluster];
-                    node.miClusterAddress = iClusterID;
-                    node.miClusterGroupAddress = clusterGroup.miIndex;
-
-                    if(node.miLevel > 0)
-                    {
-                        node.miClusterGroupAddress += aiStartClusterGroupIndex[1];
-                    }
-                    memset(node.maiChildrenAddress, 0xff, MAX_CLUSTER_TREE_NODE_CHILDREN * sizeof(uint32_t));
-                    memset(node.maiParentAddress, 0xff, MAX_CLUSTER_TREE_NODE_PARENTS * sizeof(uint32_t));
-
-                    // use clusters from MIP 0 as children
-                    if(iMIP > 0)
-                    {
-                        uint32_t iNumChildClusters = clusterGroup.maiNumClusters[iMIP - 1];
-                        for(uint32_t iChildCluster = 0; iChildCluster < iNumChildClusters; iChildCluster++)
-                        {
-                            uint32_t iChildClusterID = clusterGroup.maiClusters[iMIP - 1][iChildCluster];
-                            node.maiChildrenAddress[iChildCluster] = iChildClusterID;
-                        }
-                        node.miNumChildren = iNumChildClusters;
-                    }
-                    else
-                    {
-                        node.miNumChildren = 0;
-                    }
-
-                    // max distance positions from LOD 0 
-                    // 1) current cluster closest position to the LOD 0 cluster position
-                    // 2) LOD 0 cluster position corresponding to the current cluster position 
-                    node.mMaxDistanceCurrLODClusterPosition = aTotalMaxClusterDistancePositionFromLOD0[iClusterID].first;
-                    node.mMaxDistanceLOD0ClusterPosition = aTotalMaxClusterDistancePositionFromLOD0[iClusterID].second;
-
-                    // get the average error distance from LOD 0
-                    float fAverageDistanceFromLOD0 = FLT_MAX;
-                    for(uint32_t i = 0; i < static_cast<uint32_t>(aaMeshClusters.size()); i++)
-                    {
-                        auto iter = std::find_if(
-                            aaMeshClusters[i].begin(),
-                            aaMeshClusters[i].end(),
-                            [iClusterID](MeshCluster const& checkMeshCluster)
-                            {
-                                return checkMeshCluster.miIndex == iClusterID;
-                            });
-                        if(iter != aaMeshClusters[i].end())
-                        {
-                            fAverageDistanceFromLOD0 = iter->mfAverageDistanceFromLOD0;
-                            break;
-                        }
-                    }
-                    assert(fAverageDistanceFromLOD0 != FLT_MAX);
-                    node.mfAverageDistanceFromLOD0 = fAverageDistanceFromLOD0;
-
-                    aNodes.push_back(node);
-
-                }   // for cluster = 0 to num clusters in group 
-            }
-
-        }   // for cluster group = 0 to num cluster groups at LOD
-
-        --iCurrLevel;
-
-    }   // for LOD = num lod levels to 0
-
-    // set parents
-    uint32_t iNumNodes = static_cast<uint32_t>(aNodes.size());
-    for(uint32_t i = 0; i < iNumNodes; i++)
-    {
-        auto& node = aNodes[i];
-        for(uint32_t j = 0; j < node.miNumChildren; j++)
-        {
-            uint32_t iChildAddress = node.maiChildrenAddress[j];
-            auto childIter = std::find_if(
-                aNodes.begin(),
-                aNodes.end(),
-                [iChildAddress](ClusterTreeNode const& checkNode)
-                {
-                    return checkNode.miClusterAddress == iChildAddress;
-                }
-            );
-            assert(childIter != aNodes.end());
-
-            assert(childIter->miNumParents < MAX_CLUSTER_TREE_NODE_PARENTS);
-            childIter->maiParentAddress[childIter->miNumParents] = node.miClusterAddress;
-            ++childIter->miNumParents;
-        }
-    }
-
-    std::sort(
-        aNodes.begin(),
-        aNodes.end(),
-        [](ClusterTreeNode const& nodeLeft, ClusterTreeNode const& nodeRight)
-        {
-            return nodeLeft.miClusterAddress < nodeRight.miClusterAddress;
-        }
-    );
-
-    // make sure the average distance error of LOD n is smaller than LOD n + 1
-    std::vector<float> afMaxAverageErrorDistanceLOD(iNumLODLevels + 1);
-    for(uint32_t iLODLevel = 0; iLODLevel < iNumLODLevels + 1; iLODLevel++)
-    {
-        for(auto const& node : aNodes)
-        {
-            if(node.miLevel == iLODLevel)
-            {
-                afMaxAverageErrorDistanceLOD[iLODLevel] = maxf(afMaxAverageErrorDistanceLOD[iLODLevel], node.mfAverageDistanceFromLOD0);
-            }
-        }
-    }
-
-    for(uint32_t iLODLevel = 1; iLODLevel < iNumLODLevels + 1; iLODLevel++)
-    {
-        for(auto& node : aNodes)
-        {
-            if(node.miLevel == iLODLevel && node.mfAverageDistanceFromLOD0 < afMaxAverageErrorDistanceLOD[iLODLevel - 1])
-            {
-                node.mfAverageDistanceFromLOD0 = afMaxAverageErrorDistanceLOD[iLODLevel - 1];
-            }
-        }
-    }
-}
+#include "mesh_cluster.h"
 
 /*
 **
@@ -606,12 +341,12 @@ void testClusterLOD(
 
             {
                 std::vector<float3> aVertexPositions(cluster.miNumVertexPositions);
-                uint64_t iVertexPositionBufferAddress = cluster.miVertexPositionStartAddress * sizeof(float3);
+                uint64_t iVertexPositionBufferAddress = cluster.miVertexPositionStartArrayAddress * sizeof(float3);
                 float3 const* pVertexPositionBuffer = reinterpret_cast<float3 const*>(vertexPositionBuffer.data() + iVertexPositionBufferAddress);
                 memcpy(aVertexPositions.data(), pVertexPositionBuffer, sizeof(float3) * aVertexPositions.size());
 
                 std::vector<uint32_t> aiTrianglePositionIndices(cluster.miNumTrianglePositionIndices);
-                uint64_t iTriangleIndexAddress = cluster.miTrianglePositionIndexAddress * sizeof(uint32_t);
+                uint64_t iTriangleIndexAddress = cluster.miTrianglePositionIndexArrayAddress * sizeof(uint32_t);
                 uint32_t const* pTrianglePositionIndexBuffer = reinterpret_cast<uint32_t const*>(trianglePositionIndexBuffer.data() + iTriangleIndexAddress);
                 memcpy(aiTrianglePositionIndices.data(), pTrianglePositionIndexBuffer, sizeof(uint32_t) * aiTrianglePositionIndices.size());
 
@@ -869,6 +604,32 @@ void setClusterErrorTerm(
 /*
 **
 */
+void setClusterErrorTerm2(
+    uint8_t* aClusterNodes,
+    uint32_t iAddress,
+    float fScreenSpaceError,
+    bool bCheckExisting)
+{
+    bool bFound = false;
+    uint32_t iNumClusterNodes = *(reinterpret_cast<uint32_t*>(aClusterNodes));
+    ClusterTreeNode* paClusterNodes = reinterpret_cast<ClusterTreeNode*>(aClusterNodes + sizeof(uint32_t));
+    for(uint32_t iCluster = 0; iCluster < iNumClusterNodes; iCluster++)
+    {
+        if(paClusterNodes[iCluster].miClusterAddress == iAddress)
+        {
+            paClusterNodes[iCluster].mfScreenSpaceError = fScreenSpaceError;
+            bFound = true;
+            break;
+        }
+    }
+
+    assert(bFound);
+}
+
+
+/*
+**
+*/
 void testClusterLOD2(
     std::vector<ClusterTreeNode>& aClusterNodes,
     std::vector<ClusterGroupTreeNode>& aClusterGroupNodes,
@@ -945,17 +706,17 @@ void testClusterLOD2(
                     ClusterTreeNode cluster;
                     getCluster(cluster, clusterGroup.maiClusterAddress[i], aClusterNodes);
 
-                    float4 clipSpace0 = viewProjectionMatrix * float4(cluster.mMaxDistanceCurrLODClusterPosition, 1.0f);
-                    float4 clipSpace1 = viewProjectionMatrix * float4(cluster.mMaxDistanceLOD0ClusterPosition, 1.0f);
-
-                    clipSpace0.x /= clipSpace0.w; clipSpace0.y /= clipSpace0.w; clipSpace0.z /= clipSpace0.w;
-                    clipSpace1.x /= clipSpace1.w; clipSpace1.y /= clipSpace1.w; clipSpace1.z /= clipSpace1.w;
-
-                    clipSpace0 = clipSpace0 * 0.5f + 0.5f;
-                    clipSpace1 = clipSpace1 * 0.5f + 0.5f;
-
-                    float3 diff = float3(clipSpace1.x, clipSpace1.y, clipSpace1.z) - float3(clipSpace0.x, clipSpace0.y, clipSpace0.z);
-                    float fClusterError = length(diff) * float(iOutputWidth);
+                    //float4 clipSpace0 = viewProjectionMatrix * float4(cluster.mMaxDistanceCurrLODClusterPosition, 1.0f);
+                    //float4 clipSpace1 = viewProjectionMatrix * float4(cluster.mMaxDistanceLOD0ClusterPosition, 1.0f);
+                    //
+                    //clipSpace0.x /= clipSpace0.w; clipSpace0.y /= clipSpace0.w; clipSpace0.z /= clipSpace0.w;
+                    //clipSpace1.x /= clipSpace1.w; clipSpace1.y /= clipSpace1.w; clipSpace1.z /= clipSpace1.w;
+                    //
+                    //clipSpace0 = clipSpace0 * 0.5f + 0.5f;
+                    //clipSpace1 = clipSpace1 * 0.5f + 0.5f;
+                    //
+                    //float3 diff = float3(clipSpace1.x, clipSpace1.y, clipSpace1.z) - float3(clipSpace0.x, clipSpace0.y, clipSpace0.z);
+                    //float fClusterError = length(diff) * float(iOutputWidth);
                     //fScreenSpacePixelError = maxf(fClusterError, fScreenSpacePixelError);
 
                     // compute the screen projected average error distance
@@ -977,6 +738,7 @@ void testClusterLOD2(
                         fScreenSpacePixelError = maxf(fAverageClusterError, fScreenSpacePixelError);
                     }
 
+#if 0
                     // TODO: needs to make sure the error is always smaller in the lower LOD
                     // check smaller parent cluster error, set to a percentage of it if possible
                     if(cluster.miNumParents > 0)
@@ -1004,7 +766,8 @@ void testClusterLOD2(
                             fClusterError = fParentMaxError * 0.8f;
                             fScreenSpacePixelError = fClusterError;
                         }
-                    }
+                    }   // for i = 0 to num children in cluster group
+#endif // #if 0
 
                     setClusterErrorTerm(
                         aClusterNodes,
@@ -1015,10 +778,18 @@ void testClusterLOD2(
                     ScreenSpaceErrorInfo errorInfo;
                     errorInfo.miCluster = cluster.miClusterAddress;
                     errorInfo.miClusterGroup = clusterGroup.miClusterGroupAddress;
-                    errorInfo.mfError = fClusterError;
+                    errorInfo.mfError = fScreenSpacePixelError;
 
                     aScreenSpaceErrors.push_back(errorInfo);
-                    
+                }
+
+                for(uint32_t i = 0; i < clusterGroup.miNumChildClusters; i++)
+                {
+                    setClusterErrorTerm(
+                        aClusterNodes,
+                        clusterGroup.maiClusterAddress[i],
+                        fScreenSpacePixelError,
+                        true);
                 }
             }
             
@@ -1171,11 +942,110 @@ void _traverseClusterNodes(
         {
             aiDrawClusterAddress.push_back(clusterNode.miClusterAddress);
 
-            DEBUG_PRINTF("\t!!! draw this cluster %d error: %.4f !!!\n", iClusterAddress, clusterNode.mfScreenSpaceError);
+            DEBUG_PRINTF("\t!!! draw this cluster %d (%lld) error: %.4f !!!\n", 
+                iClusterAddress, 
+                aiDrawClusterAddress.size(),
+                clusterNode.mfScreenSpaceError);
         }
 
         assert(iClusterAddress < 65536);
         aiVisited[iClusterAddress] = 1;
+        DEBUG_PRINTF("\n");
+    }
+
+    DEBUG_PRINTF("!!! done with root cluster %d !!!\n", rootCluster.miClusterAddress);
+}
+
+/*
+**
+*/
+void getCluster2(
+    ClusterTreeNode& cluster,
+    uint32_t iAddress,
+    uint8_t const* aNodes)
+{
+    uint32_t iNumNodes = *(reinterpret_cast<uint32_t const*>(aNodes));
+    ClusterTreeNode const* paNodes = reinterpret_cast<ClusterTreeNode const*>(aNodes + sizeof(uint32_t));
+
+    ClusterTreeNode const* pNode = paNodes;
+    for(uint32_t i = 0; i < iNumNodes; i++)
+    {
+        if(pNode->miClusterAddress == iAddress)
+        {
+            cluster = *pNode;
+            break;
+        }
+        ++pNode;
+    }
+}
+
+/*
+**
+*/
+void _traverseClusterNodes2(
+    uint8_t* aiDrawClusterAddress,
+    uint8_t* aiVisited,
+    ClusterTreeNode const& rootCluster,
+    uint8_t const* aClusterNodes,
+    float fDrawScreenErrorThreshold)
+{
+    uint32_t* paiVisited = reinterpret_cast<uint32_t*>(aiVisited);
+    uint32_t* pStart = paiVisited;
+    *pStart = 65536;
+    paiVisited = pStart + 1;
+    uint32_t iNumVisited = 0;
+
+    uint32_t* paiDrawClusterAddressStart = reinterpret_cast<uint32_t*>(aiDrawClusterAddress);
+    uint32_t* paiDrawClusterAddress = paiDrawClusterAddressStart + 1;
+
+    int32_t aiStack[128] = { 0 };
+    aiStack[0] = rootCluster.miClusterAddress;
+    int32_t iStackTop = 1;
+    for(;;)
+    {
+        --iStackTop;
+        if(iStackTop < 0)
+        {
+            break;
+        }
+        uint32_t iClusterAddress = aiStack[iStackTop];
+        ClusterTreeNode clusterNode;
+        getCluster2(clusterNode, iClusterAddress, aClusterNodes);
+
+        DEBUG_PRINTF("cluster %d error: %.4f\n", iClusterAddress, clusterNode.mfScreenSpaceError);
+        if(clusterNode.mfScreenSpaceError > fDrawScreenErrorThreshold)
+        {
+            if(!_hasVisited(paiVisited, iClusterAddress))
+            {
+                for(uint32_t iChild = 0; iChild < clusterNode.miNumChildren; iChild++)
+                {
+                    if(!_hasVisited(paiVisited, clusterNode.maiChildrenAddress[iChild]))
+                    {
+                        DEBUG_PRINTF("\tadd child cluster %d\n", clusterNode.maiChildrenAddress[iChild]);
+
+                        assert(iStackTop < 128);
+                        aiStack[iStackTop] = clusterNode.maiChildrenAddress[iChild];
+                        ++iStackTop;
+                    }
+                }
+            }
+        }
+        else
+        {
+            //aiDrawClusterAddress.push_back(clusterNode.miClusterAddress);
+            uint32_t iSize = *paiDrawClusterAddressStart;
+            *(paiDrawClusterAddress + iSize) = clusterNode.miClusterAddress;
+            *paiDrawClusterAddressStart = iSize + 1;
+
+            DEBUG_PRINTF("\t!!! draw this cluster %d (%d) error: %.4f !!!\n", 
+                iClusterAddress, 
+                *paiDrawClusterAddressStart,
+                clusterNode.mfScreenSpaceError);
+        }
+
+        assert(iClusterAddress < 65536);
+        paiVisited[iClusterAddress] = 1;
+        assert(*pStart == 65536);
         DEBUG_PRINTF("\n");
     }
 
@@ -1197,6 +1067,10 @@ void testClusterLOD3(
     uint32_t iOutputHeight,
     float fPixelErrorThreshold)
 {
+    PrintOptions option;
+    option.mbDisplayTime = false;
+    setPrintOptions(option);
+
     float const kfCameraNear = 1.0f;
     float const kfCameraFar = 100.0f;
 
@@ -1235,6 +1109,16 @@ void testClusterLOD3(
     int32_t aiClusterGroupStack[128] = { 0 };
     int32_t iClusterGroupStackTop = 0;
 
+    uint32_t const kiMaxDrawClusters = 1 << 16;
+    std::vector<uint8_t> aiDrawClusterAddressCopy(kiMaxDrawClusters * sizeof(uint32_t) + sizeof(uint32_t));
+    uint8_t* aiDrawClusterAddress2 = aiDrawClusterAddressCopy.data();
+    
+    std::vector<uint8_t> aClusterNodesCopy(aClusterNodes.size() * sizeof(ClusterTreeNode) + sizeof(uint32_t));
+    uint8_t* aClusterNodes2 = aClusterNodesCopy.data();
+    uint32_t* paiClusterNodes2 = reinterpret_cast<uint32_t*>(aClusterNodes2);
+    *paiClusterNodes2 = static_cast<uint32_t>(aClusterNodes.size());
+    memcpy(aClusterNodes2 + sizeof(uint32_t), aClusterNodes.data(), aClusterNodes.size() * sizeof(ClusterTreeNode));
+    
     // compute group node screen pixel erros
     int32_t iNumLevels = static_cast<uint32_t>(aiNumLevelGroupNodes.size());
     for(int32_t iLevel = iNumLevels - 1; iLevel >= 0; iLevel--)
@@ -1250,39 +1134,40 @@ void testClusterLOD3(
                 for(uint32_t i = 0; i < clusterGroup.miNumChildClusters; i++)
                 {
                     ClusterTreeNode cluster;
-                    getCluster(cluster, clusterGroup.maiClusterAddress[i], aClusterNodes);
+                    //getCluster(cluster, clusterGroup.maiClusterAddress[i], aClusterNodes);
+                    getCluster2(cluster, clusterGroup.maiClusterAddress[i], aClusterNodes2);
 
-                    float4 clipSpace0 = viewProjectionMatrix * float4(cluster.mMaxDistanceCurrLODClusterPosition, 1.0f);
-                    float4 clipSpace1 = viewProjectionMatrix * float4(cluster.mMaxDistanceLOD0ClusterPosition, 1.0f);
+                    //float4 clipSpace0 = viewProjectionMatrix * float4(cluster.mMaxDistanceCurrLODClusterPosition, 1.0f);
+                    //float4 clipSpace1 = viewProjectionMatrix * float4(cluster.mMaxDistanceLOD0ClusterPosition, 1.0f);
+                    //
+                    //clipSpace0.x /= clipSpace0.w; clipSpace0.y /= clipSpace0.w; clipSpace0.z /= clipSpace0.w;
+                    //clipSpace1.x /= clipSpace1.w; clipSpace1.y /= clipSpace1.w; clipSpace1.z /= clipSpace1.w;
+                    //
+                    //clipSpace0 = clipSpace0 * 0.5f + 0.5f;
+                    //clipSpace1 = clipSpace1 * 0.5f + 0.5f;
+                    //
+                    //float3 diff = float3(clipSpace1.x, clipSpace1.y, clipSpace1.z) - float3(clipSpace0.x, clipSpace0.y, clipSpace0.z);
+                    //float fClusterError = length(diff) * float(iOutputWidth);
+                    //fScreenSpacePixelError = maxf(fClusterError, fScreenSpacePixelError);
 
-                    clipSpace0.x /= clipSpace0.w; clipSpace0.y /= clipSpace0.w; clipSpace0.z /= clipSpace0.w;
-                    clipSpace1.x /= clipSpace1.w; clipSpace1.y /= clipSpace1.w; clipSpace1.z /= clipSpace1.w;
+                    // compute the screen projected average error distance
+                    {
+                        float4 pt0 = float4(cameraBinormal * cluster.mfAverageDistanceFromLOD0 * -0.5f, 1.0f);
+                        float4 pt1 = float4(cameraBinormal * cluster.mfAverageDistanceFromLOD0 * 0.5f, 1.0f);
 
-clipSpace0 = clipSpace0 * 0.5f + 0.5f;
-clipSpace1 = clipSpace1 * 0.5f + 0.5f;
+                        float4 clipSpacePt0 = viewProjectionMatrix * pt0;
+                        float4 clipSpacePt1 = viewProjectionMatrix * pt1;
 
-float3 diff = float3(clipSpace1.x, clipSpace1.y, clipSpace1.z) - float3(clipSpace0.x, clipSpace0.y, clipSpace0.z);
-float fClusterError = length(diff) * float(iOutputWidth);
-//fScreenSpacePixelError = maxf(fClusterError, fScreenSpacePixelError);
+                        clipSpacePt0.x /= clipSpacePt0.w; clipSpacePt0.y /= clipSpacePt0.w; clipSpacePt0.z /= clipSpacePt0.w;
+                        clipSpacePt1.x /= clipSpacePt1.w; clipSpacePt1.y /= clipSpacePt1.w; clipSpacePt1.z /= clipSpacePt1.w;
 
-// compute the screen projected average error distance
-{
-    float4 pt0 = float4(cameraBinormal * cluster.mfAverageDistanceFromLOD0 * -0.5f, 1.0f);
-    float4 pt1 = float4(cameraBinormal * cluster.mfAverageDistanceFromLOD0 * 0.5f, 1.0f);
+                        clipSpacePt0 = clipSpacePt0 * 0.5f + 0.5f;
+                        clipSpacePt1 = clipSpacePt1 * 0.5f + 0.5f;
 
-    float4 clipSpacePt0 = viewProjectionMatrix * pt0;
-    float4 clipSpacePt1 = viewProjectionMatrix * pt1;
-
-    clipSpacePt0.x /= clipSpacePt0.w; clipSpacePt0.y /= clipSpacePt0.w; clipSpacePt0.z /= clipSpacePt0.w;
-    clipSpacePt1.x /= clipSpacePt1.w; clipSpacePt1.y /= clipSpacePt1.w; clipSpacePt1.z /= clipSpacePt1.w;
-
-    clipSpacePt0 = clipSpacePt0 * 0.5f + 0.5f;
-    clipSpacePt1 = clipSpacePt1 * 0.5f + 0.5f;
-
-    float3 diff = float3(clipSpacePt1.x, clipSpacePt1.y, clipSpacePt1.z) - float3(clipSpacePt0.x, clipSpacePt0.y, clipSpacePt0.z);
-    float fAverageClusterError = length(diff) * float(iOutputWidth);
-    fScreenSpacePixelError = maxf(fAverageClusterError, fScreenSpacePixelError);
-}
+                        float3 diff = float3(clipSpacePt1.x, clipSpacePt1.y, clipSpacePt1.z) - float3(clipSpacePt0.x, clipSpacePt0.y, clipSpacePt0.z);
+                        float fAverageClusterError = length(diff) * float(iOutputWidth);
+                        fScreenSpacePixelError = maxf(fAverageClusterError, fScreenSpacePixelError);
+                    }
 
                 }   // for i = 0 to num child clusters
 
@@ -1293,8 +1178,13 @@ float fClusterError = length(diff) * float(iOutputWidth);
 
             for(uint32_t iCluster = 0; iCluster < clusterGroup.miNumChildClusters; iCluster++)
             {
-                setClusterErrorTerm(
-                    aClusterNodes,
+                //setClusterErrorTerm(
+                //    aClusterNodes,
+                //    clusterGroup.maiClusterAddress[iCluster],
+                //    fScreenSpacePixelError,
+                //    false);
+                setClusterErrorTerm2(
+                    aClusterNodes2,
                     clusterGroup.maiClusterAddress[iCluster],
                     fScreenSpacePixelError,
                     false);
@@ -1304,32 +1194,51 @@ float fClusterError = length(diff) * float(iOutputWidth);
 
     }   // for level = 0 to num cluster group levels
 
-    float const kfDrawClusterScreenErrorThreshold = 3.0f;
-
     uint32_t const kiMaxVisitedClusterFlags = 65536;
 
+    
     std::vector<uint32_t> aiVisited(kiMaxVisitedClusterFlags);
-    memset(aiVisited.data(), 0, sizeof(uint32_t)* aiVisited.size());
+    memset(aiVisited.data(), 0, sizeof(uint32_t) * aiVisited.size());
+
+    std::vector<uint32_t> aiVisited2(kiMaxVisitedClusterFlags);
+    memset(aiVisited2.data(), 0, sizeof(uint32_t) * aiVisited2.size());
 
     uint32_t iLevel = iNumLevels - 1;
     uint32_t iNumClusterGroupsAtLevel = aiNumLevelGroupNodes[iLevel];
     uint32_t iStartIndex = aiLevelStartGroupIndices[iLevel];
-    for(uint32_t iClusterGroup = 0; iClusterGroup < iNumClusterGroupsAtLevel; iClusterGroup++)
+    //for(uint32_t iClusterGroup = 0; iClusterGroup < iNumClusterGroupsAtLevel; iClusterGroup++)
+    for(uint32_t iClusterGroup = 0; iClusterGroup < aClusterGroupNodes.size(); iClusterGroup++)
     {
         auto const& clusterGroup = aClusterGroupNodes[iClusterGroup];
+        if(clusterGroup.miLevel != iLevel)
+        {
+            continue;
+        }
+
         uint32_t iNumRootClusters = clusterGroup.miNumChildClusters;
         for(uint32_t iCluster = 0; iCluster < iNumRootClusters; iCluster++)
         {
             ClusterTreeNode rootCluster;
-            getCluster(rootCluster, clusterGroup.maiClusterAddress[iCluster], aClusterNodes);
-            _traverseClusterNodes(
-                aiDrawClusterAddress,
-                aiVisited,
+            //getCluster(rootCluster, clusterGroup.maiClusterAddress[iCluster], aClusterNodes);
+            //_traverseClusterNodes(
+            //    aiDrawClusterAddress,
+            //    aiVisited,
+            //    rootCluster,
+            //    aClusterNodes,
+            //    fPixelErrorThreshold);
+            getCluster2(rootCluster, clusterGroup.maiClusterAddress[iCluster], aClusterNodes2);
+            _traverseClusterNodes2(
+                aiDrawClusterAddress2,
+                reinterpret_cast<uint8_t*>(aiVisited2.data()),
                 rootCluster,
-                aClusterNodes,
-                kfDrawClusterScreenErrorThreshold);
+                aClusterNodes2,
+                fPixelErrorThreshold);
         }
     }
+    
+    uint32_t iNumClusters = *(reinterpret_cast<uint32_t*>(aiDrawClusterAddress2));
+    aiDrawClusterAddress.resize(iNumClusters);
+    memcpy(aiDrawClusterAddress.data(), aiDrawClusterAddress2 + sizeof(uint32_t), iNumClusters * sizeof(uint32_t));
 
     // python script to load clusters
     FILE* fp = fopen("c:\\Users\\Dingwings\\demo-models\\test-render-clusters\\draw_clusters.py", "wb");
@@ -1353,6 +1262,167 @@ float fClusterError = length(diff) * float(iOutputWidth);
         fprintf(fp, "bpy.ops.import_scene.obj(filepath=\'%s\', axis_forward='-Z', axis_up='Y', use_split_groups = True)\n", fullPath.str().c_str());
     }
     fclose(fp);
+
+    option.mbDisplayTime = true;
+    setPrintOptions(option);
+}
+
+
+
+/*
+**
+*/
+void drawMeshClusterImage2(
+    std::vector<float3>& aLightIntensityBuffer,
+    std::vector<float3>& aPositionBuffer,
+    std::vector<float3>& aNormalBuffer,
+    std::vector<float>& afDepthBuffer,
+    std::vector<float3>& aColorBuffer,
+    std::vector<uint32_t> const& aiClusterAddress,
+    std::vector<float3> const& aClusterColors,
+    std::vector<MeshCluster*> const& aMeshClusters,
+    std::vector<uint8_t>& vertexPositionBuffer,
+    std::vector<uint8_t>& vertexNormalBuffer,
+    std::vector<uint8_t>& trianglePositionIndexBuffer,
+    std::vector<uint8_t>& triangleNormalIndexBuffer,
+    float3 const& cameraPosition,
+    float3 const& cameraLookAt,
+    uint32_t iOutputWidth,
+    uint32_t iOutputHeight)
+{
+    float const kfCameraNear = 1.0f;
+    float const kfCameraFar = 100.0f;
+
+    uint32_t const kiImageWidth = 1024;
+    uint32_t const kiImageHeight = 1024;
+
+    float3 direction = normalize(cameraLookAt - cameraPosition);
+    float3 up = (fabsf(direction.z) > fabsf(direction.x) && fabsf(direction.z) > fabsf(direction.y)) ? float3(0.0f, 1.0f, 0.0f) : float3(1.0f, 0.0f, 0.0f);
+
+    // camera 
+    CCamera camera;
+    camera.setFar(kfCameraFar);
+    camera.setNear(kfCameraNear);
+    camera.setLookAt(cameraLookAt);
+    camera.setPosition(cameraPosition);
+    CameraUpdateInfo cameraUpdateInfo =
+    {
+        /* .mfViewWidth      */  1000.0f,
+        /* .mfViewHeight     */  1000.0f,
+        /* .mfFieldOfView    */  3.14159f * 0.5f,
+        /* .mUp              */  up,
+        /* .mfNear           */  kfCameraNear,
+        /* .mfFar            */  kfCameraFar,
+    };
+    camera.update(cameraUpdateInfo);
+    mat4 const& viewMatrix = camera.getViewMatrix();
+    mat4 const& projectionMatrix = camera.getProjectionMatrix();
+    mat4 viewProjectionMatrix = projectionMatrix * viewMatrix;
+
+    std::vector<float3> aTotalTrianglePositions;
+    std::vector<float3> aTotalTriangleNormals;
+    std::vector<float3> aTotalTriangleColors;
+
+    std::vector<std::string> aClusterNames;
+    for(auto const& iClusterAddress : aiClusterAddress)
+    {
+        auto iter = std::find_if(
+            aMeshClusters.begin(),
+            aMeshClusters.end(),
+            [iClusterAddress](MeshCluster const* pMeshCluster)
+            {
+                return pMeshCluster->miIndex == iClusterAddress;
+            }
+        );
+        assert(iter != aMeshClusters.end());
+
+        std::vector<float3> aVertexPositions((*iter)->miNumVertexPositions);
+        uint64_t iVertexPositionBufferAddress = (*iter)->miVertexPositionStartArrayAddress * sizeof(float3);
+        float3 const* pVertexPositionBuffer = reinterpret_cast<float3 const*>(vertexPositionBuffer.data() + iVertexPositionBufferAddress);
+        memcpy(aVertexPositions.data(), pVertexPositionBuffer, sizeof(float3) * aVertexPositions.size());
+
+        std::vector<float3> aVertexNormals((*iter)->miNumVertexNormals);
+        uint64_t iVertexNormalBufferAddress = (*iter)->miVertexNormalStartArrayAddress * sizeof(float3);
+        float3 const* pVertexNormalBuffer = reinterpret_cast<float3 const*>(vertexNormalBuffer.data() + iVertexNormalBufferAddress);
+        memcpy(aVertexNormals.data(), pVertexNormalBuffer, sizeof(float3) * aVertexNormals.size());
+
+        std::vector<uint32_t> aiTrianglePositionIndices((*iter)->miNumTrianglePositionIndices);
+        uint64_t iTriangleIndexAddress = (*iter)->miTrianglePositionIndexArrayAddress * sizeof(uint32_t);
+        uint32_t const* pTrianglePositionIndexBuffer = reinterpret_cast<uint32_t const*>(trianglePositionIndexBuffer.data() + iTriangleIndexAddress);
+        memcpy(aiTrianglePositionIndices.data(), pTrianglePositionIndexBuffer, sizeof(uint32_t) * aiTrianglePositionIndices.size());
+
+        std::vector<uint32_t> aiTriangleNormalIndices((*iter)->miNumTriangleNormalIndices);
+        uint64_t iTriangleNormalIndexAddress = (*iter)->miTriangleNormalIndexArrayAddress * sizeof(uint32_t);
+        uint32_t const* pTriangleNormalIndexBuffer = reinterpret_cast<uint32_t const*>(triangleNormalIndexBuffer.data() + iTriangleNormalIndexAddress);
+        memcpy(aiTriangleNormalIndices.data(), pTriangleNormalIndexBuffer, sizeof(uint32_t) * aiTriangleNormalIndices.size());
+
+        // transform into camera space (view projection)
+        std::vector<float4> aXFormVertexPositions(aVertexPositions.size());
+        for(uint32_t i = 0; i < static_cast<uint32_t>(aVertexPositions.size()); i++)
+        {
+            aXFormVertexPositions[i] = viewProjectionMatrix * float4(aVertexPositions[i], 1.0f);
+        }
+
+        // clip space positions
+        float3 minClipSpacePosition = float3(FLT_MAX, FLT_MAX, FLT_MAX);
+        float3 maxClipSpacePosition = float3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+        std::vector<float3> aClipSpaceVertexPositions(aXFormVertexPositions.size());
+        for(uint32_t iV = 0; iV < static_cast<uint32_t>(aXFormVertexPositions.size()); iV++)
+        {
+            aClipSpaceVertexPositions[iV].x = aXFormVertexPositions[iV].x / aXFormVertexPositions[iV].w;
+            aClipSpaceVertexPositions[iV].y = aXFormVertexPositions[iV].y / aXFormVertexPositions[iV].w;
+            aClipSpaceVertexPositions[iV].z = aXFormVertexPositions[iV].z / aXFormVertexPositions[iV].w;
+
+            aClipSpaceVertexPositions[iV].x = aClipSpaceVertexPositions[iV].x * 0.5f + 0.5f;
+            aClipSpaceVertexPositions[iV].y = 1.0f - (aClipSpaceVertexPositions[iV].y * 0.5f + 0.5f);
+            aClipSpaceVertexPositions[iV].z = aClipSpaceVertexPositions[iV].z * 0.5f + 0.5f;
+        }
+
+        // triangle clip space positions and normals
+        std::vector<float3> aTriangleClipSpaceVertexPositions(aiTrianglePositionIndices.size());
+        std::vector<float3> aTriangleVertexNormals(aiTrianglePositionIndices.size());
+        std::vector<float3> aTriangleVertexColor(aiTrianglePositionIndices.size());
+        for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aiTrianglePositionIndices.size()); iTri += 3)
+        {
+            uint32_t iPos0 = aiTrianglePositionIndices[iTri];
+            uint32_t iPos1 = aiTrianglePositionIndices[iTri + 1];
+            uint32_t iPos2 = aiTrianglePositionIndices[iTri + 2];
+
+            aTriangleClipSpaceVertexPositions[iTri] = aClipSpaceVertexPositions[iPos0];
+            aTriangleClipSpaceVertexPositions[iTri + 1] = aClipSpaceVertexPositions[iPos1];
+            aTriangleClipSpaceVertexPositions[iTri + 2] = aClipSpaceVertexPositions[iPos2];
+
+            uint32_t iNorm0 = aiTriangleNormalIndices[iTri];
+            uint32_t iNorm1 = aiTriangleNormalIndices[iTri + 1];
+            uint32_t iNorm2 = aiTriangleNormalIndices[iTri + 2];
+
+            aTriangleVertexNormals[iTri] = aVertexNormals[iNorm0];
+            aTriangleVertexNormals[iTri + 1] = aVertexNormals[iNorm1];
+            aTriangleVertexNormals[iTri + 2] = aVertexNormals[iNorm2];
+
+            aTriangleVertexColor[iTri] = aClusterColors[iClusterAddress];
+            aTriangleVertexColor[iTri + 1] = aClusterColors[iClusterAddress];
+            aTriangleVertexColor[iTri + 2] = aClusterColors[iClusterAddress];
+        }
+
+        aTotalTrianglePositions.insert(aTotalTrianglePositions.end(), aTriangleClipSpaceVertexPositions.begin(), aTriangleClipSpaceVertexPositions.end());
+        aTotalTriangleNormals.insert(aTotalTriangleNormals.end(), aTriangleVertexNormals.begin(), aTriangleVertexNormals.end());
+        aTotalTriangleColors.insert(aTotalTriangleColors.end(), aTriangleVertexColor.begin(), aTriangleVertexColor.end());
+
+    }   // for cluster = 0 to num clusters
+
+    //rasterizeMeshCUDA2(
+    //    aLightIntensityBuffer,
+    //    aPositionBuffer,
+    //    aNormalBuffer,
+    //    afDepthBuffer,
+    //    aColorBuffer,
+    //    aTotalTrianglePositions,
+    //    aTotalTriangleNormals,
+    //    aTotalTriangleColors,
+    //    iOutputWidth,
+    //    iOutputHeight,
+    //    3);
 }
 
 /*
@@ -1410,12 +1480,12 @@ void drawMeshClusterImage(
         assert(iter != aMeshClusters.end());
         
         std::vector<float3> aVertexPositions((*iter)->miNumVertexPositions);
-        uint64_t iVertexPositionBufferAddress = (*iter)->miVertexPositionStartAddress * sizeof(float3);
+        uint64_t iVertexPositionBufferAddress = (*iter)->miVertexPositionStartArrayAddress * sizeof(float3);
         float3 const* pVertexPositionBuffer = reinterpret_cast<float3 const*>(vertexPositionBuffer.data() + iVertexPositionBufferAddress);
         memcpy(aVertexPositions.data(), pVertexPositionBuffer, sizeof(float3) * aVertexPositions.size());
 
         std::vector<uint32_t> aiTrianglePositionIndices((*iter)->miNumTrianglePositionIndices);
-        uint64_t iTriangleIndexAddress = (*iter)->miTrianglePositionIndexAddress * sizeof(uint32_t);
+        uint64_t iTriangleIndexAddress = (*iter)->miTrianglePositionIndexArrayAddress * sizeof(uint32_t);
         uint32_t const* pTrianglePositionIndexBuffer = reinterpret_cast<uint32_t const*>(trianglePositionIndexBuffer.data() + iTriangleIndexAddress);
         memcpy(aiTrianglePositionIndices.data(), pTrianglePositionIndexBuffer, sizeof(uint32_t) * aiTrianglePositionIndices.size());
 

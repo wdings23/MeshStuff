@@ -1,9 +1,16 @@
 #include "split_operations.h"
 #include "LogPrint.h"
 #include "obj_helper.h"
+#include "tiny_obj_loader.h"
+#include "metis_operations.h"
+#include "move_operations.h"
+#include "system_command.h"
+#include "obj_helper.h"
 
+#include <cassert>
+#include <filesystem>
+#include <map>
 #include <sstream>
-#include <assert.h>
 
 void visitAdjacentTris(
     std::vector<uint32_t>& aiVisitedTris,
@@ -35,7 +42,7 @@ bool splitDiscontigousClusters(
 
     if(aaiSplitClusterTriangleIndices.size() > 1)
     {
-        DEBUG_PRINTF("!!! LOD %d cluster %d (%d clusters) is separated into %d parts !!!\n",
+        DEBUG_PRINTF("!!! LOD %d cluster %d (%lld clusters) is separated into %lld parts !!!\n",
             iLODLevel,
             iCheckCluster,
             aaClusterVertexPositions.size(),
@@ -644,7 +651,7 @@ void createSplitClusters2(
                     aSplitClusterVertexPositions.end(),
                     [pos0](float3 const& checkPos)
                     {
-                        return (length(pos0 - checkPos) < 1.0e-6f);
+                        return (length(pos0 - checkPos) < 1.0e-8f);
                     });
                 if(positionIter0 == aSplitClusterVertexPositions.end())
                 {
@@ -664,7 +671,7 @@ void createSplitClusters2(
                     aSplitClusterVertexPositions.end(),
                     [pos1](float3 const& checkPos)
                     {
-                        return (length(pos1 - checkPos) < 1.0e-6f);
+                        return (length(pos1 - checkPos) < 1.0e-8f);
                     });
                 if(positionIter1 == aSplitClusterVertexPositions.end())
                 {
@@ -684,7 +691,7 @@ void createSplitClusters2(
                     aSplitClusterVertexPositions.end(),
                     [pos2](float3 const& checkPos)
                     {
-                        return (length(pos2 - checkPos) < 1.0e-6f);
+                        return (length(pos2 - checkPos) < 1.0e-8f);
                     });
                 if(positionIter2 == aSplitClusterVertexPositions.end())
                 {
@@ -1089,57 +1096,68 @@ void splitCluster(
     printOptions.mbDisplayTime = false;
     setPrintOptions(printOptions);
 
-    aaVertexPositions.resize(2);
-    aaVertexNormals.resize(2);
-    aaVertexUVs.resize(2);
-
-    aaiVertexPositionIndices.resize(2);
-    aaiVertexNormalIndices.resize(2);
-    aaiVertexUVIndices.resize(2);
-
-    std::vector<uint32_t> aiAdded(aiOrigVertexPositionIndices.size());
-    memset(aiAdded.data(), 0, aiAdded.size() * sizeof(uint32_t));
+    std::vector<uint32_t> aiTriangleAdded(aiOrigVertexPositionIndices.size() / 3);
+    memset(aiTriangleAdded.data(), 0, aiTriangleAdded.size() * sizeof(uint32_t));
 
     uint32_t iCluster = 0;
 
-    for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aaiVertexPositionIndices.size()); iTri += 3)
+    uint32_t iNumTriangles = static_cast<uint32_t>(aiOrigVertexPositionIndices.size() / 3);
+    uint32_t iNumTotalTriangleAdded = 0;
+
+    // add adjacent triangles to clusters
+    for(uint32_t iCluster = 0; iCluster < 1000; iCluster++)
     {
-        float3 diff0 = aOrigVertexPositions[aiOrigVertexPositionIndices[iTri]] - aOrigVertexPositions[aiOrigVertexPositionIndices[iTri + 1]];
-        float3 diff1 = aOrigVertexPositions[aiOrigVertexPositionIndices[iTri]] - aOrigVertexPositions[aiOrigVertexPositionIndices[iTri + 2]];
-        float3 diff2 = aOrigVertexPositions[aiOrigVertexPositionIndices[iTri + 1]] - aOrigVertexPositions[aiOrigVertexPositionIndices[iTri + 2]];
-
-        if(lengthSquared(diff0) <= 1.0e-6f || lengthSquared(diff1) <= 1.0e-6f || lengthSquared(diff2) <= 1.0e-6f)
-        {
-            continue;
-        }
-
-        addTriangle(
-            aaVertexPositions[iCluster],
-            aaVertexNormals[iCluster],
-            aaVertexUVs[iCluster],
-            aaiVertexPositionIndices[iCluster],
-            aaiVertexNormalIndices[iCluster],
-            aaiVertexUVIndices[iCluster],
-            aOrigVertexPositions,
-            aOrigVertexNormals,
-            aOrigVertexUVs,
-            aiOrigVertexPositionIndices,
-            aiOrigVertexNormalIndices,
-            aiOrigVertexUVIndices,
-            0);
-
-        aiAdded[iTri] = 1;
-        break;
-    }
-        
-    // add triangle to the first cluster
-    for(;;)
-    {
-        if(aaiVertexPositionIndices[iCluster].size() >= iMaxTriangles)
+        if(iNumTotalTriangleAdded >= iNumTriangles)
         {
             break;
         }
 
+        aaVertexPositions.resize(aaVertexPositions.size() + 1);
+        aaVertexNormals.resize(aaVertexNormals.size() + 1);
+        aaVertexUVs.resize(aaVertexUVs.size() + 1);
+
+        aaiVertexPositionIndices.resize(aaiVertexPositionIndices.size() + 1);
+        aaiVertexNormalIndices.resize(aaiVertexNormalIndices.size() + 1);
+        aaiVertexUVIndices.resize(aaiVertexUVIndices.size() + 1);
+
+        // add first triangle of the cluster to determine the rest using triangle's edge adjacency
+        for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aiOrigVertexPositionIndices.size()); iTri += 3)
+        {
+            if(aiTriangleAdded[iTri / 3] == 1)
+            {
+                continue;
+            }
+
+            float3 diff0 = aOrigVertexPositions[aiOrigVertexPositionIndices[iTri]] - aOrigVertexPositions[aiOrigVertexPositionIndices[iTri + 1]];
+            float3 diff1 = aOrigVertexPositions[aiOrigVertexPositionIndices[iTri]] - aOrigVertexPositions[aiOrigVertexPositionIndices[iTri + 2]];
+            float3 diff2 = aOrigVertexPositions[aiOrigVertexPositionIndices[iTri + 1]] - aOrigVertexPositions[aiOrigVertexPositionIndices[iTri + 2]];
+
+            if(lengthSquared(diff0) <= 1.0e-8f || lengthSquared(diff1) <= 1.0e-8f || lengthSquared(diff2) <= 1.0e-8f)
+            {
+                continue;
+            }
+
+            addTriangle(
+                aaVertexPositions[iCluster],
+                aaVertexNormals[iCluster],
+                aaVertexUVs[iCluster],
+                aaiVertexPositionIndices[iCluster],
+                aaiVertexNormalIndices[iCluster],
+                aaiVertexUVIndices[iCluster],
+                aOrigVertexPositions,
+                aOrigVertexNormals,
+                aOrigVertexUVs,
+                aiOrigVertexPositionIndices,
+                aiOrigVertexNormalIndices,
+                aiOrigVertexUVIndices,
+                iTri);
+
+            aiTriangleAdded[iTri / 3] = 1;
+            ++iNumTotalTriangleAdded;
+            break;
+        }
+
+        bool bRestart = false;
         for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aaiVertexPositionIndices[iCluster].size()); iTri += 3)
         {
             if(aaiVertexPositionIndices[iCluster].size() >= iMaxTriangles)
@@ -1147,48 +1165,42 @@ void splitCluster(
                 break;
             }
 
-            float3 const& pos0 = aaVertexPositions[iCluster][aaiVertexPositionIndices[iCluster][iTri]];
-            float3 const& pos1 = aaVertexPositions[iCluster][aaiVertexPositionIndices[iCluster][iTri+1]];
-            float3 const& pos2 = aaVertexPositions[iCluster][aaiVertexPositionIndices[iCluster][iTri+2]];
-            //DEBUG_PRINTF("CLUSTER %d TRIANGLE %d IN LIST\npos0 (%.4f, %.4f, %.4f)\npos1 (%.4f, %.4f, %.4f)\npos2 (%.4f, %.4f, %.4f)\n",
-            //    iCluster,
-            //    iTri,
-            //    pos0.x, pos0.y, pos0.z,
-            //    pos1.x, pos1.y, pos1.z,
-            //    pos2.x, pos2.y, pos2.z);
+            if(bRestart)
+            {
+                iTri = 0;
+            }
 
+            float3 const& pos0 = aaVertexPositions[iCluster][aaiVertexPositionIndices[iCluster][iTri]];
+            float3 const& pos1 = aaVertexPositions[iCluster][aaiVertexPositionIndices[iCluster][iTri + 1]];
+            float3 const& pos2 = aaVertexPositions[iCluster][aaiVertexPositionIndices[iCluster][iTri + 2]];
+
+            uint32_t iNumClusterTriAdded = 0;
             for(uint32_t iCheckTri = 0; iCheckTri < static_cast<uint32_t>(aiOrigVertexPositionIndices.size()); iCheckTri += 3)
             {
-                if(aaiVertexPositionIndices[iCluster].size() >= iMaxTriangles)
-                {
-                    break;
-                }
-
-                float3 const& checkPos0 = aOrigVertexPositions[aiOrigVertexPositionIndices[iCheckTri]];
-                float3 const& checkPos1 = aOrigVertexPositions[aiOrigVertexPositionIndices[iCheckTri + 1]];
-                float3 const& checkPos2 = aOrigVertexPositions[aiOrigVertexPositionIndices[iCheckTri + 2]];
-
-                //DEBUG_PRINTF("\tCHECK TRIANGLE %d IN LIST\n\tcheck pos0 (%.4f, %.4f, %.4f)\n\tcheck pos1 (%.4f, %.4f, %.4f)\n\tcheck pos2 (%.4f, %.4f, %.4f)\n",
-                //    iCheckTri,
-                //    checkPos0.x, checkPos0.y, checkPos0.z,
-                //    checkPos1.x, checkPos1.y, checkPos1.z,
-                //    checkPos2.x, checkPos2.y, checkPos2.z);
-
-                float3 diff0 = checkPos1 - checkPos0;
-                float3 diff1 = checkPos2 - checkPos0;
-                float3 diff2 = checkPos2 - checkPos1;
-
-                if(lengthSquared(diff0) <= 1.0e-8f || lengthSquared(diff1) <= 1.0e-8f || lengthSquared(diff2) <= 1.0e-8f)
-                {
-                    //DEBUG_PRINTF("!!! SKIP INVALID TRIANGLE !!!\n");
-                    continue;
-                }
-
-                if(aiAdded[iCheckTri])
+                // already added
+                if(aiTriangleAdded[iCheckTri / 3])
                 {
                     continue;
                 }
 
+                // check invalid triangle
+                {
+                    float3 const& checkPos0 = aOrigVertexPositions[aiOrigVertexPositionIndices[iCheckTri]];
+                    float3 const& checkPos1 = aOrigVertexPositions[aiOrigVertexPositionIndices[iCheckTri + 1]];
+                    float3 const& checkPos2 = aOrigVertexPositions[aiOrigVertexPositionIndices[iCheckTri + 2]];
+
+                    float3 diff0 = checkPos1 - checkPos0;
+                    float3 diff1 = checkPos2 - checkPos0;
+                    float3 diff2 = checkPos2 - checkPos1;
+
+                    if(lengthSquared(diff0) <= 1.0e-8f || lengthSquared(diff1) <= 1.0e-8f || lengthSquared(diff2) <= 1.0e-8f)
+                    {
+                        //DEBUG_PRINTF("!!! SKIP INVALID TRIANGLE !!!\n");
+                        continue;
+                    }
+                }
+
+                // check shared edge
                 uint32_t iNumSamePos = 0;
                 float3 aSamePos[3];
                 for(uint32_t i = 0; i < 3; i++)
@@ -1209,6 +1221,8 @@ void splitCluster(
 
                 if(iNumSamePos == 2)
                 {
+                    // shared an edge, add 
+
                     uint32_t aiNewIndices[3] = { UINT32_MAX, UINT32_MAX, UINT32_MAX };
                     addTriangle(
                         aaVertexPositions[iCluster],
@@ -1225,63 +1239,837 @@ void splitCluster(
                         aiOrigVertexUVIndices,
                         iCheckTri);
 
-                    aiAdded[iCheckTri] = 1;
+                    aiTriangleAdded[iCheckTri/3] = 1;
+                    ++iNumTotalTriangleAdded;
+                    ++iNumClusterTriAdded;
 
-                    DEBUG_PRINTF("\t!!! ADD triangle: %d !!!\n\tpos0 (%.4f, %.4f, %.4f) pos1 (%.4f, %.4f, %.4f)\n", 
+                    DEBUG_PRINTF("\t!!! ADD triangle: %d !!!\n\tpos0 (%.4f, %.4f, %.4f) pos1 (%.4f, %.4f, %.4f)\n",
                         iCheckTri,
                         aSamePos[0].x, aSamePos[0].y, aSamePos[0].z,
                         aSamePos[1].x, aSamePos[1].y, aSamePos[1].z);
                 }
 
-
             }   // for check tri = tri + 3 to num triangles
+
+            // restart from the 1st triangle
+            if(iNumClusterTriAdded > 0)
+            {
+                bRestart = true;
+            }
+            else
+            {
+                bRestart = false;
+            }
 
         }   // for tri = 0 to num triangles
 
-    }   // for ;;
-
-    // add remain triangles
-    iCluster = 1;
-    for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aiAdded.size()); iTri += 3)
-    {
-        if(aiAdded[iTri] == 0)
-        {
-            addTriangle(
-                aaVertexPositions[iCluster],
-                aaVertexNormals[iCluster],
-                aaVertexUVs[iCluster],
-                aaiVertexPositionIndices[iCluster],
-                aaiVertexNormalIndices[iCluster],
-                aaiVertexUVIndices[iCluster],
-                aOrigVertexPositions,
-                aOrigVertexNormals,
-                aOrigVertexUVs,
-                aiOrigVertexPositionIndices,
-                aiOrigVertexNormalIndices,
-                aiOrigVertexUVIndices,
-                iTri);
-        }
-    }
-
-    //for(uint32_t iCluster = 0; iCluster < 2; iCluster++)
-    //{
-    //    std::ostringstream objectName;
-    //    objectName << "split-cluster" << iCluster;
-    //
-    //    std::ostringstream outputFilePath;
-    //    outputFilePath << "c:\\Users\\Dingwings\\demo-models\\debug-output\\" << objectName.str() << ".obj";
-    //
-    //    writeOBJFile(
-    //        aaVertexPositions[iCluster],
-    //        aaVertexNormals[iCluster],
-    //        aaVertexUVs[iCluster],
-    //        aaiVertexPositionIndices[iCluster],
-    //        aaiVertexNormalIndices[iCluster],
-    //        aaiVertexUVIndices[iCluster],
-    //        outputFilePath.str(),
-    //        objectName.str());
-    //}
+    }   // for cluster = 0 to 1000
 
     printOptions.mbDisplayTime = true;
     setPrintOptions(printOptions);
+}
+
+/*
+**
+*/
+void splitClusterGroups(
+    std::vector<std::vector<float3>>& aaClusterVertexPositions,
+    std::vector<std::vector<float3>>& aaClusterVertexNormals,
+    std::vector<std::vector<float2>>& aaClusterVertexUVs,
+    std::vector<std::vector<uint32_t>>& aaiClusterTrianglePositionIndices,
+    std::vector<std::vector<uint32_t>>& aaiClusterTriangleNormalIndices,
+    std::vector<std::vector<uint32_t>>& aaiClusterTriangleUVIndices,
+    uint32_t& iTotalClusterIndex,
+    std::vector<float3> const& aClusterGroupVertexPositions,
+    std::vector<float3> const& aClusterGroupVertexNormals,
+    std::vector<float2> const& aClusterGroupVertexUVs,
+    std::vector<uint32_t> const& aiClusterTrianglePositionIndices,
+    std::vector<uint32_t> const& aiClusterTriangleNormalIndices,
+    std::vector<uint32_t> const& aiClusterTriangleUVIndices,
+    uint32_t iMaxTrianglesPerCluster,
+    uint32_t iNumSplitClusters,
+    uint32_t iLODLevel,
+    uint32_t iClusterGroup,
+    std::string const& meshModelName,
+    std::string const& homeDirectory)
+{
+
+    // update cluster group vertex positions and triangles, generate metis mesh file to partition, and output the max partitions of 2 into clusters
+
+    // triangle positions
+    std::vector<float3> aClusterGroupTrianglePositions(aiClusterTrianglePositionIndices.size());
+    for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aiClusterTrianglePositionIndices.size()); iTri += 3)
+    {
+        uint32_t iPos0 = aiClusterTrianglePositionIndices[iTri];
+        uint32_t iPos1 = aiClusterTrianglePositionIndices[iTri + 1];
+        uint32_t iPos2 = aiClusterTrianglePositionIndices[iTri + 2];
+
+        aClusterGroupTrianglePositions[iTri] = aClusterGroupVertexPositions[iPos0];
+        aClusterGroupTrianglePositions[iTri + 1] = aClusterGroupVertexPositions[iPos1];
+        aClusterGroupTrianglePositions[iTri + 2] = aClusterGroupVertexPositions[iPos2];
+    }
+
+    // triangle normals
+    std::vector<float3> aClusterGroupTriangleNormals(aiClusterTriangleNormalIndices.size());
+    for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aiClusterTriangleNormalIndices.size()); iTri += 3)
+    {
+        uint32_t iNormal0 = aiClusterTriangleNormalIndices[iTri];
+        uint32_t iNormal1 = aiClusterTriangleNormalIndices[iTri + 1];
+        uint32_t iNormal2 = aiClusterTriangleNormalIndices[iTri + 2];
+
+        aClusterGroupTriangleNormals[iTri] = aClusterGroupVertexNormals[iNormal0];
+        aClusterGroupTriangleNormals[iTri + 1] = aClusterGroupVertexNormals[iNormal1];
+        aClusterGroupTriangleNormals[iTri + 2] = aClusterGroupVertexNormals[iNormal2];
+    }
+
+    // triangle uvs
+    std::vector<float2> aClusterGroupTriangleUVs(aiClusterTriangleUVIndices.size());
+    for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aiClusterTriangleUVIndices.size()); iTri += 3)
+    {
+        uint32_t iUV0 = aiClusterTriangleUVIndices[iTri];
+        uint32_t iUV1 = aiClusterTriangleUVIndices[iTri + 1];
+        uint32_t iUV2 = aiClusterTriangleUVIndices[iTri + 2];
+
+        aClusterGroupTriangleUVs[iTri] = aClusterGroupVertexUVs[iUV0];
+        aClusterGroupTriangleUVs[iTri + 1] = aClusterGroupVertexUVs[iUV1];
+        aClusterGroupTriangleUVs[iTri + 2] = aClusterGroupVertexUVs[iUV2];
+    }
+
+    float const kfDifferenceThreshold = 1.0e-8f;
+
+    // re-build triangle indices
+    std::vector<float3> aTrimmedTotalVertexPositions;
+    std::vector<uint32_t> aiTrianglePositionIndices(aClusterGroupTrianglePositions.size());
+    for(uint32_t i = 0; i < static_cast<uint32_t>(aClusterGroupTrianglePositions.size()); i++)
+    {
+        auto const& vertexPosition = aClusterGroupTrianglePositions[i];
+        auto iter = std::find_if(
+            aTrimmedTotalVertexPositions.begin(),
+            aTrimmedTotalVertexPositions.end(),
+            [vertexPosition,
+            kfDifferenceThreshold](float3 const& checkPos)
+            {
+                return length(checkPos - vertexPosition) < kfDifferenceThreshold;
+            }
+        );
+
+        uint32_t iVertexIndex = static_cast<uint32_t>(aTrimmedTotalVertexPositions.size());
+        if(iter == aTrimmedTotalVertexPositions.end())
+        {
+            aTrimmedTotalVertexPositions.push_back(vertexPosition);
+        }
+        else
+        {
+            iVertexIndex = static_cast<uint32_t>(std::distance(aTrimmedTotalVertexPositions.begin(), iter));
+        }
+
+        aiTrianglePositionIndices[i] = iVertexIndex;
+    }
+
+    // check for consistency
+    for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aiTrianglePositionIndices.size()); iTri += 3)
+    {
+        uint32_t iPos0 = aiTrianglePositionIndices[iTri];
+        uint32_t iPos1 = aiTrianglePositionIndices[iTri + 1];
+        uint32_t iPos2 = aiTrianglePositionIndices[iTri + 2];
+
+        assert(iPos0 != iPos1 && iPos0 != iPos2 && iPos1 != iPos2);
+    }
+
+    // re-build triangle normals
+    std::vector<float3> aTrimmedTotalVertexNormals;
+    std::vector<uint32_t> aiTriangleNormalIndices(aClusterGroupTriangleNormals.size());
+    for(uint32_t i = 0; i < static_cast<uint32_t>(aClusterGroupTriangleNormals.size()); i++)
+    {
+        auto const& vertexNormal = aClusterGroupTriangleNormals[i];
+        auto iter = std::find_if(
+            aTrimmedTotalVertexNormals.begin(),
+            aTrimmedTotalVertexNormals.end(),
+            [vertexNormal](float3 const& checkPos)
+            {
+                return length(checkPos - vertexNormal) < 1.0e-5f;
+            }
+        );
+
+        uint32_t iVertexIndex = static_cast<uint32_t>(aTrimmedTotalVertexNormals.size());
+        if(iter == aTrimmedTotalVertexNormals.end())
+        {
+            aTrimmedTotalVertexNormals.push_back(vertexNormal);
+        }
+        else
+        {
+            iVertexIndex = static_cast<uint32_t>(std::distance(aTrimmedTotalVertexNormals.begin(), iter));
+        }
+
+        aiTriangleNormalIndices[i] = iVertexIndex;
+    }
+
+    // re-build triangle uvs
+    std::vector<float2> aTrimmedTotalVertexUVs;
+    std::vector<uint32_t> aiTriangleUVIndices(aClusterGroupTriangleUVs.size());
+    for(uint32_t i = 0; i < static_cast<uint32_t>(aClusterGroupTriangleUVs.size()); i++)
+    {
+        auto const& vertexUV = aClusterGroupTriangleUVs[i];
+        auto iter = std::find_if(
+            aTrimmedTotalVertexUVs.begin(),
+            aTrimmedTotalVertexUVs.end(),
+            [vertexUV](float2 const& checkUV)
+            {
+                return length(checkUV - vertexUV) < 1.0e-5f;
+            }
+        );
+
+        uint32_t iVertexIndex = static_cast<uint32_t>(aTrimmedTotalVertexUVs.size());
+        if(iter == aTrimmedTotalVertexUVs.end())
+        {
+            aTrimmedTotalVertexUVs.push_back(vertexUV);
+        }
+        else
+        {
+            iVertexIndex = static_cast<uint32_t>(std::distance(aTrimmedTotalVertexUVs.begin(), iter));
+        }
+
+        aiTriangleUVIndices[i] = iVertexIndex;
+    }
+
+    uint32_t iPrevNumClusters = static_cast<uint32_t>(aaClusterVertexPositions.size());
+
+    std::vector<std::vector<float3>> aaTempClusterVertexPositions;
+    std::vector<std::vector<float3>> aaTempClusterVertexNormals;
+    std::vector<std::vector<float2>> aaTempClusterVertexUVs;
+    std::vector<std::vector<uint32_t>> aaiTempClusterTrianglePositionIndices;
+    std::vector<std::vector<uint32_t>> aaiTempClusterTriangleNormalIndices;
+    std::vector<std::vector<uint32_t>> aaiTempClusterTriangleUVIndices;
+    {
+        std::vector<std::vector<float3>> aaTempClusterGroupVertexPositions(1);
+        std::vector<std::vector<float3>> aaTempClusterGroupVertexNormals(1);
+        std::vector<std::vector<float2>> aaTempClusterGroupVertexUVs(1);
+
+        std::vector<std::vector<uint32_t>> aaiTempClusterGroupTrianglePositionIndices(1);
+        std::vector<std::vector<uint32_t>> aaiTempClusterGroupTriangleNormalIndices(1);
+        std::vector<std::vector<uint32_t>> aaiTempClusterGroupTriangleUVIndices(1);
+
+        aaTempClusterGroupVertexPositions[0] = aTrimmedTotalVertexPositions;
+        aaTempClusterGroupVertexNormals[0] = aTrimmedTotalVertexNormals;
+        aaTempClusterGroupVertexUVs[0] = aTrimmedTotalVertexUVs;
+
+        aaiTempClusterGroupTrianglePositionIndices[0] = aiTrianglePositionIndices;
+        aaiTempClusterGroupTriangleNormalIndices[0] = aiTriangleNormalIndices;
+        aaiTempClusterGroupTriangleUVIndices[0] = aiTriangleUVIndices;
+
+        splitCluster3(
+            aaTempClusterVertexPositions,
+            aaTempClusterVertexNormals,
+            aaTempClusterVertexUVs,
+            aaiTempClusterTrianglePositionIndices,
+            aaiTempClusterTriangleNormalIndices,
+            aaiTempClusterTriangleUVIndices,
+            aaTempClusterGroupVertexPositions,
+            aaTempClusterGroupVertexNormals,
+            aaTempClusterGroupVertexUVs,
+            aaiTempClusterGroupTrianglePositionIndices,
+            aaiTempClusterGroupTriangleNormalIndices,
+            aaiTempClusterGroupTriangleUVIndices,
+            0,
+            iMaxTrianglesPerCluster);
+    }
+
+    // move large cluster triangles to smaller ones or merge small cluster triangles to larger clusters
+    {
+        bool bResetLoop = false;
+        for(uint32_t iCheckCluster = 0; iCheckCluster < static_cast<uint32_t>(aaiTempClusterTrianglePositionIndices.size()); iCheckCluster++)
+        {
+            if(bResetLoop)
+            {
+                iCheckCluster = 0;
+                bResetLoop = false;
+            }
+
+            if(aaiTempClusterTrianglePositionIndices[iCheckCluster].size() > 128 * 3)
+            {
+                //for(uint32_t j = 0; j < static_cast<uint32_t>(aaiTempClusterTrianglePositionIndices.size()); j++)
+                //{
+                //    DEBUG_PRINTF("BEFORE moveTriangle cluster %d size: %d\n",
+                //        j,
+                //        static_cast<uint32_t>(aaiTempClusterTrianglePositionIndices[j].size()));
+                //}
+
+                bResetLoop = moveTriangles(
+                    aaTempClusterVertexPositions,
+                    aaTempClusterVertexNormals,
+                    aaTempClusterVertexUVs,
+                    aaiTempClusterTrianglePositionIndices,
+                    aaiTempClusterTriangleNormalIndices,
+                    aaiTempClusterTriangleUVIndices,
+                    iCheckCluster,
+                    128 * 3);
+                if(bResetLoop)
+                {
+                    iCheckCluster = 0;
+                }
+
+                //for(uint32_t j = 0; j < static_cast<uint32_t>(aaiTempClusterTrianglePositionIndices.size()); j++)
+                //{
+                //    DEBUG_PRINTF("AFTER moveTriangles cluster %d size: %d\n",
+                //        j,
+                //        static_cast<uint32_t>(aaiTempClusterTrianglePositionIndices[j].size()));
+                //}
+                //DEBUG_PRINTF("\n");
+            }
+            else if(aaiTempClusterTrianglePositionIndices[iCheckCluster].size() <= 12)
+            {
+                //DEBUG_PRINTF("\n");
+                //for(uint32_t j = 0; j < static_cast<uint32_t>(aaiTempClusterTrianglePositionIndices.size()); j++)
+                //{
+                //    DEBUG_PRINTF("BEFORE mergeTriangles cluster %d size: %d\n",
+                //        j,
+                //        static_cast<uint32_t>(aaiTempClusterTrianglePositionIndices[j].size()));
+                //}
+
+                bResetLoop = mergeTriangles(
+                    aaTempClusterVertexPositions,
+                    aaTempClusterVertexNormals,
+                    aaTempClusterVertexUVs,
+                    aaiTempClusterTrianglePositionIndices,
+                    aaiTempClusterTriangleNormalIndices,
+                    aaiTempClusterTriangleUVIndices,
+                    iCheckCluster);
+                if(bResetLoop)
+                {
+                    iCheckCluster = 0;
+                }
+
+                //for(uint32_t j = 0; j < static_cast<uint32_t>(aaiTempClusterTrianglePositionIndices.size()); j++)
+                //{
+                //    DEBUG_PRINTF("AFTER mergeTriangles cluster %d size: %d\n",
+                //        j,
+                //        static_cast<uint32_t>(aaiTempClusterTrianglePositionIndices[j].size()));
+                //}
+                //DEBUG_PRINTF("\n");
+            }
+        }
+    }
+
+    for(uint32_t i = 0; i < static_cast<uint32_t>(aaTempClusterVertexPositions.size()); i++)
+    {
+        if(aaTempClusterVertexPositions[i].size() > 0)
+        {
+            aaClusterVertexPositions.push_back(aaTempClusterVertexPositions[i]);
+            aaClusterVertexNormals.push_back(aaTempClusterVertexNormals[i]);
+            aaClusterVertexUVs.push_back(aaTempClusterVertexUVs[i]);
+
+            aaiClusterTrianglePositionIndices.push_back(aaiTempClusterTrianglePositionIndices[i]);
+            aaiClusterTriangleNormalIndices.push_back(aaiTempClusterTriangleNormalIndices[i]);
+            aaiClusterTriangleUVIndices.push_back(aaiTempClusterTriangleUVIndices[i]);
+        }
+    }
+
+    // cluster clean up here...
+
+    uint32_t iCurrNumClusters = static_cast<uint32_t>(aaClusterVertexPositions.size());
+    iTotalClusterIndex += (iCurrNumClusters - iPrevNumClusters);
+
+    assert(aaClusterVertexPositions.size() == aaClusterVertexNormals.size());
+    assert(aaClusterVertexPositions.size() == aaClusterVertexUVs.size());
+
+    assert(aaiClusterTrianglePositionIndices.size() == aaiClusterTriangleNormalIndices.size());
+    assert(aaiClusterTrianglePositionIndices.size() == aaiClusterTriangleUVIndices.size());
+}
+
+/*
+**
+*/
+void splitLargeClusters(
+    std::vector<std::vector<float3>>& aaClusterVertexPositions,
+    std::vector<std::vector<float3>>& aaClusterVertexNormals,
+    std::vector<std::vector<float2>>& aaClusterVertexUVs,
+    std::vector<std::vector<uint32_t>>& aaiClusterTrianglePositionIndices,
+    std::vector<std::vector<uint32_t>>& aaiClusterTriangleNormalIndices,
+    std::vector<std::vector<uint32_t>>& aaiClusterTriangleUVIndices,
+    uint32_t& iNumClusters,
+    uint32_t& iNumClusterGroups,
+    uint32_t iMaxTrianglesPerCluster,
+    std::string const& meshModelName,
+    std::string const& homeDirectory)
+{
+    uint32_t iNumTotalSplitCluster = iNumClusters;
+    for(int32_t iCluster = 0; iCluster < static_cast<int32_t>(aaClusterVertexPositions.size()); iCluster++)
+    {
+        assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleNormalIndices[iCluster].size());
+        assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleUVIndices[iCluster].size());
+
+        if(aaiClusterTrianglePositionIndices[iCluster].size() >= iMaxTrianglesPerCluster)
+        {
+            std::ostringstream metisFileFolderPath;
+            {
+                metisFileFolderPath << homeDirectory << "metis\\" << meshModelName << "\\";
+                std::filesystem::path metisFileFolderFileSystemPath(metisFileFolderPath.str());
+                if(!std::filesystem::exists(metisFileFolderFileSystemPath))
+                {
+                    std::filesystem::create_directory(metisFileFolderFileSystemPath);
+                }
+            }
+
+            std::ostringstream outputMetisSplitMeshFilePath;
+            outputMetisSplitMeshFilePath << metisFileFolderPath.str() << "split-cluster";
+            outputMetisSplitMeshFilePath << iCluster << "-lod" << 0 << ".mesh";
+
+            buildMETISMeshFile2(
+                outputMetisSplitMeshFilePath.str(),
+                aaiClusterTrianglePositionIndices[iCluster]);
+
+            uint32_t iNumSplitClusters = static_cast<uint32_t>(aaiClusterTrianglePositionIndices[iCluster].size()) / (128 * 3);
+            iNumSplitClusters = std::max(iNumSplitClusters, 2u);
+            // exec the mpmetis to generate the initial clusters
+            std::ostringstream metisCommand;
+            metisCommand << "D:\\test\\METIS\\build\\windows\\programs\\Debug\\mpmetis.exe ";
+            metisCommand << outputMetisSplitMeshFilePath.str() << " ";
+            metisCommand << "-gtype=dual ";
+            metisCommand << "-ncommon=2 ";
+            metisCommand << "-objtype=cut ";
+            metisCommand << "-ufactor=60 ";
+            metisCommand << "-contig ";
+            //metisCommand << "-minconn ";
+            //metisCommand << "-niter=20 ";
+            metisCommand << iNumSplitClusters;
+            std::string result = execCommand(metisCommand.str(), false);
+            if(result.find("Metis returned with an error.") != std::string::npos)
+            {
+                metisCommand = std::ostringstream();
+                metisCommand << "D:\\test\\METIS\\build\\windows\\programs\\Debug\\mpmetis.exe ";
+                metisCommand << outputMetisSplitMeshFilePath.str() << " ";
+                metisCommand << "-gtype=dual ";
+                metisCommand << "-ncommon=2 ";
+                metisCommand << "-objtype=cut ";
+                //metisCommand << "-ufactor=600 ";
+                metisCommand << iNumSplitClusters;
+                result = execCommand(metisCommand.str(), false);
+                assert(result.find("Metis returned with an error.") == std::string::npos);
+            }
+
+            std::ostringstream outputSplitPartitionFilePath;
+            outputSplitPartitionFilePath << outputMetisSplitMeshFilePath.str() << ".epart.";
+            outputSplitPartitionFilePath << iNumSplitClusters;
+
+            std::vector<uint32_t> aiClusters;
+            readMetisClusterFile(aiClusters, outputSplitPartitionFilePath.str());
+
+            // map of element index (triangle index) to cluster
+            std::map<uint32_t, std::vector<uint32_t>> aSplitClusterMap;
+            {
+                std::vector<uint32_t> aiSplitClusters;
+                readMetisClusterFile(aiSplitClusters, outputSplitPartitionFilePath.str());
+                for(uint32_t i = 0; i < static_cast<uint32_t>(aiSplitClusters.size()); i++)
+                {
+                    uint32_t const& iSplitCluster = aiSplitClusters[i];
+                    aSplitClusterMap[iSplitCluster].push_back(i);
+                }
+            }
+
+            std::vector<std::vector<float3>> aaSplitClusterVertexPositions(iNumSplitClusters);
+            std::vector<std::vector<float3>> aaSplitClusterVertexNormals(iNumSplitClusters);
+            std::vector<std::vector<float2>> aaSplitClusterVertexUVs(iNumSplitClusters);
+            std::vector<std::vector<uint32_t>> aaiSplitClusterTrianglePositionIndices(iNumSplitClusters);
+            std::vector<std::vector<uint32_t>> aaiSplitClusterTriangleNormalIndices(iNumSplitClusters);
+            std::vector<std::vector<uint32_t>> aaiSplitClusterTriangleUVIndices(iNumSplitClusters);
+            for(uint32_t iSplitCluster = 0; iSplitCluster < iNumSplitClusters; iSplitCluster++)
+            {
+                outputMeshClusters2(
+                    aaSplitClusterVertexPositions[iSplitCluster],
+                    aaSplitClusterVertexNormals[iSplitCluster],
+                    aaSplitClusterVertexUVs[iSplitCluster],
+                    aaiSplitClusterTrianglePositionIndices[iSplitCluster],
+                    aaiSplitClusterTriangleNormalIndices[iSplitCluster],
+                    aaiSplitClusterTriangleUVIndices[iSplitCluster],
+                    aSplitClusterMap[iSplitCluster],
+                    aaClusterVertexPositions[iCluster],
+                    aaClusterVertexNormals[iCluster],
+                    aaClusterVertexUVs[iCluster],
+                    aaiClusterTrianglePositionIndices[iCluster],
+                    aaiClusterTriangleNormalIndices[iCluster],
+                    aaiClusterTriangleUVIndices[iCluster],
+                    0,
+                    iNumTotalSplitCluster);
+                ++iNumTotalSplitCluster;
+            }
+
+            bool bReset = false;
+            for(uint32_t iSplitCluster = 0; iSplitCluster < iNumSplitClusters; iSplitCluster++)
+            {
+                if(bReset)
+                {
+                    iSplitCluster = 0;
+                    bReset = false;
+                }
+                for(int32_t iTri = 0; iTri < static_cast<int32_t>(aaiSplitClusterTrianglePositionIndices[iSplitCluster].size()); iTri += 3)
+                {
+                    uint32_t iPos0 = aaiSplitClusterTrianglePositionIndices[iSplitCluster][iTri];
+                    uint32_t iPos1 = aaiSplitClusterTrianglePositionIndices[iSplitCluster][iTri + 1];
+                    uint32_t iPos2 = aaiSplitClusterTrianglePositionIndices[iSplitCluster][iTri + 2];
+
+                    if(iPos0 == iPos1 || iPos0 == iPos2 || iPos1 == iPos2)
+                    {
+                        aaiSplitClusterTrianglePositionIndices[iSplitCluster].erase(
+                            aaiSplitClusterTrianglePositionIndices[iSplitCluster].begin() + iTri,
+                            aaiSplitClusterTrianglePositionIndices[iSplitCluster].begin() + iTri + 3);
+
+                        aaiSplitClusterTriangleNormalIndices[iSplitCluster].erase(
+                            aaiSplitClusterTriangleNormalIndices[iSplitCluster].begin() + iTri,
+                            aaiSplitClusterTriangleNormalIndices[iSplitCluster].begin() + iTri + 3);
+
+                        aaiSplitClusterTriangleUVIndices[iSplitCluster].erase(
+                            aaiSplitClusterTriangleUVIndices[iSplitCluster].begin() + iTri,
+                            aaiSplitClusterTriangleUVIndices[iSplitCluster].begin() + iTri + 3);
+
+                        bReset = true;
+
+                        DEBUG_PRINTF("!!! Remove degenerate triangle %d from split cluster %d\n", iTri, iSplitCluster);
+
+                        break;
+                    }
+                }
+            }
+
+            aaClusterVertexPositions.erase(aaClusterVertexPositions.begin() + iCluster);
+            aaClusterVertexNormals.erase(aaClusterVertexNormals.begin() + iCluster);
+            aaClusterVertexUVs.erase(aaClusterVertexUVs.begin() + iCluster);
+
+            aaiClusterTrianglePositionIndices.erase(aaiClusterTrianglePositionIndices.begin() + iCluster);
+            aaiClusterTriangleNormalIndices.erase(aaiClusterTriangleNormalIndices.begin() + iCluster);
+            aaiClusterTriangleUVIndices.erase(aaiClusterTriangleUVIndices.begin() + iCluster);
+
+            if(iCluster < aaiClusterTrianglePositionIndices.size())
+            {
+                assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleNormalIndices[iCluster].size());
+                assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleUVIndices[iCluster].size());
+            }
+            else
+            {
+                assert(aaiClusterTrianglePositionIndices[iCluster - 1].size() == aaiClusterTriangleNormalIndices[iCluster - 1].size());
+                assert(aaiClusterTrianglePositionIndices[iCluster - 1].size() == aaiClusterTriangleUVIndices[iCluster - 1].size());
+            }
+
+            for(uint32_t iSplitCluster = 0; iSplitCluster < iNumSplitClusters; iSplitCluster++)
+            {
+                aaClusterVertexPositions.push_back(aaSplitClusterVertexPositions[iSplitCluster]);
+                aaClusterVertexNormals.push_back(aaSplitClusterVertexNormals[iSplitCluster]);
+                aaClusterVertexUVs.push_back(aaSplitClusterVertexUVs[iSplitCluster]);
+
+                aaiClusterTrianglePositionIndices.push_back(aaiSplitClusterTrianglePositionIndices[iSplitCluster]);
+                aaiClusterTriangleNormalIndices.push_back(aaiSplitClusterTriangleNormalIndices[iSplitCluster]);
+                aaiClusterTriangleUVIndices.push_back(aaiSplitClusterTriangleUVIndices[iSplitCluster]);
+            }
+
+            assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleNormalIndices[iCluster].size());
+            assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleUVIndices[iCluster].size());
+
+            iNumClusters = static_cast<uint32_t>(aaClusterVertexPositions.size());
+            iNumClusterGroups = iNumClusters / 4;
+
+            iCluster = -1;
+
+        }   // if cluster size > threshold
+
+    }   // for cluster = 0 to num clusters
+}
+
+/*
+**
+*/
+void splitCluster3(
+    std::vector<std::vector<float3>>& aaSplitClusterVertexPositions,
+    std::vector<std::vector<float3>>& aaSplitClusterVertexNormals,
+    std::vector<std::vector<float2>>& aaSplitClusterVertexUVs,
+    std::vector<std::vector<uint32_t>>& aaiSplitClusterTrianglePositionIndices,
+    std::vector<std::vector<uint32_t>>& aaiSplitClusterTriangleNormalIndices,
+    std::vector<std::vector<uint32_t>>& aaiSplitClusterTriangleUVIndices,
+    std::vector<std::vector<float3>> const& aaClusterVertexPositions,
+    std::vector<std::vector<float3>> const& aaClusterVertexNormals,
+    std::vector<std::vector<float2>> const& aaClusterVertexUVs,
+    std::vector<std::vector<uint32_t>> const& aaiClusterTrianglePositionIndices,
+    std::vector<std::vector<uint32_t>> const& aaiClusterTriangleNormalIndices,
+    std::vector<std::vector<uint32_t>> const& aaiClusterTriangleUVIndices,
+    uint32_t iOrigCluster,
+    uint32_t iMaxTrianglesPerCluster)
+{
+    struct AdjacencyInfo
+    {
+        uint32_t        miNumAdjacentTriangles;
+        uint32_t        maiAdjacentTriangles[64];
+    };
+
+    auto const& aClusterVertexPositions = aaClusterVertexPositions[iOrigCluster];
+    auto const& aClusterVertexNormals = aaClusterVertexNormals[iOrigCluster];
+    auto const& aClusterVertexUVs = aaClusterVertexUVs[iOrigCluster];
+
+    auto const& aiClusterTrianglePositionIndices = aaiClusterTrianglePositionIndices[iOrigCluster];
+    auto const& aiClusterTriangleNormalIndices = aaiClusterTriangleNormalIndices[iOrigCluster];
+    auto const& aiClusterTriangleUVIndices = aaiClusterTriangleUVIndices[iOrigCluster];
+
+    //uint32_t aiNumPartitionTriangles[MAX_SPLIT_CLUSTERS];
+    std::vector<uint32_t> aiNumPartitionTriangles;
+
+    uint32_t iNumTrianglePositionIndices = static_cast<uint32_t>(aiClusterTrianglePositionIndices.size());
+
+    // build adjacency info for all the triangles
+    std::vector<AdjacencyInfo> aTriangleAdjacencyInfo(iNumTrianglePositionIndices);
+    for(uint32_t iTri = 0; iTri < iNumTrianglePositionIndices; iTri += 3)
+    {
+        for(uint32_t iCheckTri = 0; iCheckTri < iNumTrianglePositionIndices; iCheckTri += 3)
+        {
+            if(iTri == iCheckTri)
+            {
+                continue;
+            }
+
+            uint32_t iNumSamePos = 0;
+            for(uint32_t i = 0; i < 3; i++)
+            {
+                for(uint32_t j = 0; j < 3; j++)
+                {
+                    if(aiClusterTrianglePositionIndices[iTri + i] == aiClusterTrianglePositionIndices[iCheckTri + j])
+                    {
+                        ++iNumSamePos;
+                        break;
+                    }
+                }
+            }
+
+            if(iNumSamePos > 0)
+            {
+                uint32_t iTriIndex = iTri / 3;
+                uint32_t iCheckTriIndex = iCheckTri / 3;
+
+                assert(iCheckTri < aiClusterTrianglePositionIndices.size());
+
+                aTriangleAdjacencyInfo[iTriIndex].maiAdjacentTriangles[aTriangleAdjacencyInfo[iTriIndex].miNumAdjacentTriangles] = iCheckTriIndex;
+                aTriangleAdjacencyInfo[iTriIndex].miNumAdjacentTriangles += 1;
+            }
+        }
+    }
+
+    //std::vector<std::vector<uint32_t>> aaiClusterTriangles(MAX_SPLIT_CLUSTERS);
+    //for(uint32_t i = 0; i < aaiClusterTriangles.size(); i++)
+    //{
+    //    aaiClusterTriangles[i].resize(1024);
+    //}
+    std::vector<std::vector<uint32_t>> aaiClusterTriangles;
+
+    uint32_t iNumTotalTriAdded = 0;
+    uint32_t iSplitClusterID = 0;
+
+    uint32_t iNumClusters = uint32_t(ceilf(float(iNumTrianglePositionIndices) / float(iMaxTrianglesPerCluster)));
+    uint32_t iNumTrianglesPerCluster = uint32_t(ceilf(float(iNumTrianglePositionIndices) / float(iNumClusters))) / 3;
+
+    std::vector<uint32_t> aiAdded(1 << 16);
+    memset(aiAdded.data(), 0, sizeof(uint32_t) * (1 << 16));
+    uint32_t iPartition = 0;
+    for(iPartition = 0;; iPartition++)
+    {
+        //assert(iPartition < MAX_SPLIT_CLUSTERS);
+
+        //aiNumPartitionTriangles[iPartition] = 0;
+        aiNumPartitionTriangles.push_back(0);
+
+        iSplitClusterID += iPartition;
+        if(iNumTotalTriAdded >= iNumTrianglePositionIndices / 3)
+        {
+            break;
+        }
+
+        aaiClusterTriangles.resize(aaiClusterTriangles.size() + 1);
+
+        // add starting triangle ID
+        uint32_t iNumClusterTriAdded = 0;
+        for(uint32_t iStartTri = 0; iStartTri < iNumTrianglePositionIndices; iStartTri += 3)
+        {
+            uint32_t iStartTriID = iStartTri / 3;
+            assert(iStartTriID < aiAdded.size());
+            if(aiAdded[iStartTriID] > 0)
+            {
+                continue;
+            }
+            //assert(iPartition < MAX_SPLIT_CLUSTERS);
+            //aaiClusterTriangles[iPartition][0] = iStartTri / 3;
+            aaiClusterTriangles[iPartition].push_back(iStartTri / 3);
+
+            //assert(iStartTriID < sizeof(aiAdded) / sizeof(*aiAdded));
+            assert(iStartTriID < aiAdded.size());
+            aiAdded[iStartTriID] = 1;
+
+            ++iNumClusterTriAdded;
+            ++iNumTotalTriAdded;
+            ++aiNumPartitionTriangles[iPartition];
+
+            break;
+        }
+
+        assert(aaiClusterTriangles[iPartition].size() == iNumClusterTriAdded);
+        for(uint32_t iTri = 0; iTri < iNumClusterTriAdded; iTri++)
+        {
+            // add adjacent triangle IDs
+            assert(iTri < aaiClusterTriangles[iPartition].size());
+            uint32_t iTriID = aaiClusterTriangles[iPartition][iTri];
+            AdjacencyInfo adjacencyInfo = aTriangleAdjacencyInfo[iTriID];
+            for(uint32_t iAddTri = 0; iAddTri < adjacencyInfo.miNumAdjacentTriangles; iAddTri++)
+            {
+                if(iNumClusterTriAdded >= iNumTrianglesPerCluster)
+                {
+                    break;
+                }
+
+                uint32_t iAdjacentTriID = adjacencyInfo.maiAdjacentTriangles[iAddTri];
+                if(iAdjacentTriID >= aiAdded.size())
+                {
+                    uint32_t iPrevSize = static_cast<uint32_t>(aiAdded.size());
+                    aiAdded.resize(aiAdded.size() + aiAdded.size());
+                    memset(aiAdded.data() + iPrevSize, 0, aiAdded.size() * sizeof(uint32_t));
+                }
+
+                if(aiAdded[iAdjacentTriID] > 0)
+                {
+                    continue;
+                }
+
+                assert(iAdjacentTriID * 3 < iNumTrianglePositionIndices);
+                //aaiClusterTriangles[iPartition][iNumClusterTriAdded] = iAdjacentTriID;
+                aaiClusterTriangles[iPartition].push_back(iAdjacentTriID);
+                aiAdded[iAdjacentTriID] = 1;
+
+                ++iNumClusterTriAdded;
+                ++iNumTotalTriAdded;
+                ++aiNumPartitionTriangles[iPartition];
+            }
+
+            if(iNumClusterTriAdded >= iNumTrianglesPerCluster)
+            {
+                break;
+            }
+
+        }   // for tri = 0 to curr num tri added 
+
+    }   // for partition = 0 to num partitions
+
+    aaSplitClusterVertexPositions.resize(iPartition);
+    aaSplitClusterVertexNormals.resize(iPartition);
+    aaSplitClusterVertexUVs.resize(iPartition);
+    aaiSplitClusterTrianglePositionIndices.resize(iPartition);
+    aaiSplitClusterTriangleNormalIndices.resize(iPartition);
+    aaiSplitClusterTriangleUVIndices.resize(iPartition);
+
+    for(uint32_t iCluster = 0; iCluster < iPartition; iCluster++)
+    {
+        uint32_t iNumClusterTriangles = aiNumPartitionTriangles[iCluster];
+        auto const& aiClusterTriangles = aaiClusterTriangles[iCluster];
+        
+        // partition positions, normals, and uvs
+        for(uint32_t iTri = 0; iTri < iNumClusterTriangles; iTri++)
+        {
+            uint32_t iTriID = aiClusterTriangles[iTri];
+            for(uint32_t i = 0; i < 3; i++)
+            {
+                uint32_t iSrcIndex = iTriID * 3 + i;
+                
+                // position
+                float3 const& position = aClusterVertexPositions[aiClusterTrianglePositionIndices[iSrcIndex]];
+                auto positionIter = std::find_if(
+                    aaSplitClusterVertexPositions[iCluster].begin(),
+                    aaSplitClusterVertexPositions[iCluster].end(),
+                    [position](float3 const& checkPosition)
+                    {
+                        return (lengthSquared(position - checkPosition) <= 1.0e-8f);
+                    });
+                if(positionIter == aaSplitClusterVertexPositions[iCluster].end())
+                {
+                    aaSplitClusterVertexPositions[iCluster].push_back(position);
+                }
+
+                // normal
+                float3 const& normal = aClusterVertexNormals[aiClusterTriangleNormalIndices[iSrcIndex]];
+                auto normalIter = std::find_if(
+                    aaSplitClusterVertexNormals[iCluster].begin(),
+                    aaSplitClusterVertexNormals[iCluster].end(),
+                    [normal](float3 const& checkNormal)
+                    {
+                        return (lengthSquared(normal - checkNormal) <= 1.0e-8f);
+                    });
+                if(normalIter == aaSplitClusterVertexNormals[iCluster].end())
+                {
+                    aaSplitClusterVertexNormals[iCluster].push_back(normal);
+                }
+                
+                // uv
+                float2 const& uv = aClusterVertexUVs[aiClusterTriangleUVIndices[iSrcIndex]];
+                auto uvIter = std::find_if(
+                    aaSplitClusterVertexUVs[iCluster].begin(),
+                    aaSplitClusterVertexUVs[iCluster].end(),
+                    [uv](float2 const& checkUV)
+                    {
+                        return (lengthSquared(uv - checkUV) <= 1.0e-8f);
+                    });
+                if(uvIter == aaSplitClusterVertexUVs[iCluster].end())
+                {
+                    aaSplitClusterVertexUVs[iCluster].push_back(uv);
+                }
+
+            }   // for i = 0 to 3 
+        
+        }   // for tri = 0 to num triangles
+
+        // partition position indices, normal indices, and uv indices
+        for(uint32_t iTri = 0; iTri < iNumClusterTriangles; iTri++)
+        {
+            uint32_t iTriID = aiClusterTriangles[iTri];
+            for(uint32_t i = 0; i < 3; i++)
+            {
+                uint32_t iSrcIndex = iTriID * 3 + i;
+                uint32_t iDestIndex = iTri * 3 + i;
+
+                // position
+                float3 const& position = aClusterVertexPositions[aiClusterTrianglePositionIndices[iSrcIndex]];
+                auto positionIter = std::find_if(
+                    aaSplitClusterVertexPositions[iCluster].begin(),
+                    aaSplitClusterVertexPositions[iCluster].end(),
+                    [position](float3 const& checkPosition)
+                    {
+                        return (lengthSquared(position - checkPosition) <= 1.0e-8f);
+                    });
+                assert(positionIter != aaSplitClusterVertexPositions[iCluster].end());
+                uint32_t iPositionIndex = static_cast<uint32_t>(std::distance(aaSplitClusterVertexPositions[iCluster].begin(), positionIter));
+                aaiSplitClusterTrianglePositionIndices[iCluster].push_back(iPositionIndex);
+                assert(lengthSquared(aaSplitClusterVertexPositions[iCluster][iPositionIndex] - position) <= 1.0e-8f);
+
+                // normal
+                float3 const& normal = aClusterVertexNormals[aiClusterTriangleNormalIndices[iSrcIndex]];
+                auto normalIter = std::find_if(
+                    aaSplitClusterVertexNormals[iCluster].begin(),
+                    aaSplitClusterVertexNormals[iCluster].end(),
+                    [normal](float3 const& checkNormal)
+                    {
+                        return (lengthSquared(normal - checkNormal) <= 1.0e-8f);
+                    });
+                assert(normalIter != aaSplitClusterVertexNormals[iCluster].end());
+                uint32_t iNormalIndex = static_cast<uint32_t>(std::distance(aaSplitClusterVertexNormals[iCluster].begin(), normalIter));
+                aaiSplitClusterTriangleNormalIndices[iCluster].push_back(iNormalIndex);
+                assert(lengthSquared(aaSplitClusterVertexNormals[iCluster][iNormalIndex] - normal) <= 1.0e-8f);
+
+                // uv
+                float2 const& uv = aClusterVertexUVs[aiClusterTriangleUVIndices[iSrcIndex]];
+                auto uvIter = std::find_if(
+                    aaSplitClusterVertexUVs[iCluster].begin(),
+                    aaSplitClusterVertexUVs[iCluster].end(),
+                    [uv](float2 const& checkUV)
+                    {
+                        return (lengthSquared(uv - checkUV) <= 1.0e-8f);
+                    });
+                assert(uvIter != aaSplitClusterVertexUVs[iCluster].end());
+                uint32_t iUVIndex = static_cast<uint32_t>(std::distance(aaSplitClusterVertexUVs[iCluster].begin(), uvIter));
+                aaiSplitClusterTriangleUVIndices[iCluster].push_back(iUVIndex);
+                assert(lengthSquared(aaSplitClusterVertexUVs[iCluster][iUVIndex] - uv) <= 1.0e-8f);
+
+            }   // for i = 0 to 3
+
+        }   // for tri = 0 to num cluster triangles
+        
+    }   // for cluster = 0 to num clusters
 }

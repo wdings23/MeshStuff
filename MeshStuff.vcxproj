@@ -75,58 +75,82 @@
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>D:\test\DirectXMesh\DirectXMesh;D:\test\DirectXMesh\Utilities;D:\test\MeshStuff\externals;D:\test\MeshStuff\externals\tinyobjloader;D:\test\MeshStuff\externals\METIS\include;D:\test\MeshStuff\externals\tinyexr;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>D:\test\DirectXMesh\build-project\bin\CMake\Debug\DirectXMesh.lib;D:\test\MeshStuff\externals\METIS\lib\metis.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>D:\test\DirectXMesh\build-project\bin\CMake\Debug\DirectXMesh.lib;D:\test\MeshStuff\externals\METIS\lib\metis.lib;dbghelp.lib;cudart.lib;cuda.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="adjacency_operations.cpp" />
     <ClCompile Include="barycentric.cpp" />
+    <ClCompile Include="boundary_operations.cpp" />
     <ClCompile Include="Camera.cpp" />
+    <ClCompile Include="cleanup_operations.cpp" />
+    <ClCompile Include="cluster_tree.cpp" />
     <ClCompile Include="externals\tinyexr\miniz.c" />
     <ClCompile Include="join_operations.cpp" />
     <ClCompile Include="LogPrint.cpp" />
     <ClCompile Include="mat4.cpp" />
     <ClCompile Include="MeshStuff.cpp" />
+    <ClCompile Include="mesh_cluster.cpp" />
+    <ClCompile Include="metis_operations.cpp" />
     <ClCompile Include="move_operations.cpp" />
     <ClCompile Include="obj_helper.cpp" />
     <ClCompile Include="quaternion.cpp" />
     <ClCompile Include="rasterizer.cpp" />
+    <CudaCompile Include="adjacency_operations.cu" />
+    <CudaCompile Include="rasterizer.cu" />
     <CudaCompile Include="test.cu" />
+    <ClCompile Include="simplify_operations.cpp" />
     <ClCompile Include="split_operations.cpp" />
+    <ClCompile Include="system_command.cpp" />
+    <ClCompile Include="test_cluster_streaming.cpp" />
     <ClCompile Include="test_flip.cpp" />
     <ClCompile Include="test_raster.cpp" />
     <ClCompile Include="utils.cpp" />
     <ClCompile Include="vec.cpp" />
+    <ClCompile Include="vertex_mapping_operations.cpp" />
     <ClCompile Include="wtfassert.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="adjacency_operations.h" />
+    <ClInclude Include="adjacency_operations_cuda.h" />
     <ClInclude Include="barycentric.h" />
+    <ClInclude Include="boundary_operations.h" />
     <ClInclude Include="Camera.h" />
+    <ClInclude Include="cleanup_operations.h" />
+    <ClInclude Include="cluster_tree.h" />
     <ClInclude Include="externals\METIS\include\metis.h" />
     <ClInclude Include="externals\tinyexr\miniz.h" />
     <ClInclude Include="externals\tinyexr\tinyexr.h" />
     <ClInclude Include="externals\tinyobjloader\tiny_obj_loader.h" />
-    <ClInclude Include="Header.h" />
+    <ClInclude Include="float3_lib.cuh" />
     <ClInclude Include="join_operations.h" />
     <ClInclude Include="LogPrint.h" />
     <ClInclude Include="mat4.h" />
     <ClInclude Include="mesh_cluster.h" />
+    <ClInclude Include="metis_operations.h" />
     <ClInclude Include="move_operations.h" />
     <ClInclude Include="obj_helper.h" />
     <ClInclude Include="quaternion.h" />
     <ClInclude Include="rasterizer.h" />
+    <ClInclude Include="rasterizerCUDA.h" />
+    <ClInclude Include="simplify_operations.h" />
     <ClInclude Include="split_operations.h" />
     <ClInclude Include="stb_image.h" />
     <ClInclude Include="stb_image_write.h" />
+    <ClInclude Include="system_command.h" />
     <ClInclude Include="test.h" />
+    <ClInclude Include="test_cluster_streaming.h" />
     <ClInclude Include="test_raster.h" />
     <ClInclude Include="utils.h" />
     <ClInclude Include="vec.h" />
+    <ClInclude Include="vertex_mapping_operations.h" />
     <ClInclude Include="wtfassert.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

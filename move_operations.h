@@ -21,3 +21,19 @@ bool mergeTriangles(
     std::vector<std::vector<uint32_t>>& aaiVertexNormalIndices,
     std::vector<std::vector<uint32_t>>& aaiVertexUVIndices,
     uint32_t iSrcCluster);
+
+void moveVertices(
+    std::vector<float3>& aDestClusterVertexPositions,
+    std::vector<float3>& aDestClusterVertexNormals,
+    std::vector<float2>& aDestClusterVertexUVs,
+    std::vector<uint32_t>& aiDestClusterPositionIndices,
+    std::vector<uint32_t>& aiDestClusterNormalIndices,
+    std::vector<uint32_t>& aiDestClusterUVIndices,
+    std::vector<float3> const& aSrcClusterVertexPositions,
+    std::vector<float3> const& aSrcClusterVertexNormals,
+    std::vector<float2> const& aSrcClusterVertexUVs,
+    std::vector<uint32_t> const& aiSrcClusterPositionIndices,
+    std::vector<uint32_t> const& aiSrcClusterNormalIndices,
+    std::vector<uint32_t> const& aiSrcClusterUVIndices,
+    uint32_t iSrcCluster,
+    uint32_t iDestCluster);
