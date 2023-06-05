@@ -77,9 +77,6 @@ std::vector<uint8_t> triangleUVIndexBuffer(1 << 26);
 std::vector<uint8_t> gMeshClusterGroupBuffer(1 << 26);
 std::vector<uint8_t> gMeshClusterBuffer(1 << 26);
 
-/*
-**
-*/
 void buildClusterGroups(
     std::vector<std::vector<float3>>& aaClusterGroupVertexPositions,
     std::vector<std::vector<float3>>& aaClusterGroupVertexNormals,
@@ -99,310 +96,12 @@ void buildClusterGroups(
     uint32_t iLODLevel,
     std::string const& meshClusterOutputName,
     std::string const& homeDirectory,
-    std::string const& meshModelName)
-{
-    for(uint32_t iCluster = 0; iCluster < static_cast<uint32_t>(aaClusterVertexPositions.size()); iCluster++)
-    {
-        assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleNormalIndices[iCluster].size());
-        assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleUVIndices[iCluster].size());
-    }
-
-    aaClusterGroupVertexPositions.resize(iNumClusterGroups);
-    aaiClusterGroupTrianglePositionIndices.resize(iNumClusterGroups);
-    
-    aaClusterGroupVertexNormals.resize(iNumClusterGroups);
-    aaiClusterGroupTriangleNormalIndices.resize(iNumClusterGroups);
-
-    aaClusterGroupVertexUVs.resize(iNumClusterGroups);
-    aaiClusterGroupTriangleUVIndices.resize(iNumClusterGroups);
-    
-    aiClusterGroupMap.resize(iNumClusters);
-
-    // group clusters
-    if(iNumClusterGroups > 1)
-    {
-        // place clusters into the groups specified by metis
-        std::ostringstream clusterGroupPartitionFilePath;
-        clusterGroupPartitionFilePath << meshClusterOutputName << ".part.";
-        clusterGroupPartitionFilePath << iNumClusterGroups;
-       
-        std::vector<uint32_t> aiClusterGroups;
-        readMetisClusterFile(aiClusterGroups, clusterGroupPartitionFilePath.str());
-
-        assert(aiClusterGroups.size() == aaClusterVertexPositions.size());
-        for(uint32_t iCluster = 0; iCluster < static_cast<uint32_t>(aaClusterVertexPositions.size()); iCluster++)
-        {
-            uint32_t iClusterGroup = aiClusterGroups[iCluster];
-
-            aaClusterGroupVertexPositions[iClusterGroup].insert(
-                aaClusterGroupVertexPositions[iClusterGroup].end(),
-                aaClusterVertexPositions[iCluster].begin(),
-                aaClusterVertexPositions[iCluster].end());
-
-            aaClusterGroupVertexNormals[iClusterGroup].insert(
-                aaClusterGroupVertexNormals[iClusterGroup].end(),
-                aaClusterVertexNormals[iCluster].begin(),
-                aaClusterVertexNormals[iCluster].end());
-
-            aaClusterGroupVertexUVs[iClusterGroup].insert(
-                aaClusterGroupVertexUVs[iClusterGroup].end(),
-                aaClusterVertexUVs[iCluster].begin(),
-                aaClusterVertexUVs[iCluster].end());
-
-            aiClusterGroupMap[iCluster] = iClusterGroup;
-        }
-    }
-    else
-    {
-        for(uint32_t iCluster = 0; iCluster < iNumClusters; iCluster++)
-        {
-            aaClusterGroupVertexPositions[0].insert(
-                aaClusterGroupVertexPositions[0].end(),
-                aaClusterVertexPositions[iCluster].begin(),
-                aaClusterVertexPositions[iCluster].end());
-
-            aaClusterGroupVertexNormals[0].insert(
-                aaClusterGroupVertexNormals[0].end(),
-                aaClusterVertexNormals[iCluster].begin(),
-                aaClusterVertexNormals[iCluster].end());
-
-            aaClusterGroupVertexUVs[0].insert(
-                aaClusterGroupVertexUVs[0].end(),
-                aaClusterVertexUVs[iCluster].begin(),
-                aaClusterVertexUVs[iCluster].end());
-
-            aiClusterGroupMap[iCluster] = 0;
-        }
-    }
-
-    for(uint32_t iCluster = 0; iCluster < static_cast<uint32_t>(aaClusterVertexPositions.size()); iCluster++)
-    {
-        assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleNormalIndices[iCluster].size());
-        assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleUVIndices[iCluster].size());
-    }
-
-    static float const kfEqualityThreshold = 1.0e-8f;
-
-    // POSITIONS: remap cluster triangle indices into cluster group's own indices
-    std::vector<uint32_t> aiDiscardTris;
-    for(uint32_t iCluster = 0; iCluster < static_cast<uint32_t>(aaClusterVertexPositions.size()); iCluster++)
-    {
-        uint32_t iClusterGroup = aiClusterGroupMap[iCluster];
-        for(int32_t iTri = 0; iTri < static_cast<int32_t>(aaiClusterTrianglePositionIndices[iCluster].size()); iTri += 3)
-        {
-            // position
-            uint32_t iOrigPos0 = aaiClusterTrianglePositionIndices[iCluster][iTri];
-            uint32_t iOrigPos1 = aaiClusterTrianglePositionIndices[iCluster][iTri + 1];
-            uint32_t iOrigPos2 = aaiClusterTrianglePositionIndices[iCluster][iTri + 2];
-
-            float3 const& position0 = aaClusterVertexPositions[iCluster][iOrigPos0];
-            float3 const& position1 = aaClusterVertexPositions[iCluster][iOrigPos1];
-            float3 const& position2 = aaClusterVertexPositions[iCluster][iOrigPos2];
-
-            auto posIter0 = std::find_if(
-                aaClusterGroupVertexPositions[iClusterGroup].begin(),
-                aaClusterGroupVertexPositions[iClusterGroup].end(),
-                [position0](float3 const& checkPosition)
-                {
-                    return (length(checkPosition - position0) <= kfEqualityThreshold);
-                });
-            assert(posIter0 != aaClusterGroupVertexPositions[iClusterGroup].end());
-            uint32_t iRemapPos0 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexPositions[iClusterGroup].begin(), posIter0));
-
-            auto posIter1 = std::find_if(
-                aaClusterGroupVertexPositions[iClusterGroup].begin(),
-                aaClusterGroupVertexPositions[iClusterGroup].end(),
-                [position1](float3 const& checkPosition)
-                {
-                    return (length(checkPosition - position1) <= kfEqualityThreshold);
-                });
-            assert(posIter1 != aaClusterGroupVertexPositions[iClusterGroup].end());
-            uint32_t iRemapPos1 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexPositions[iClusterGroup].begin(), posIter1));
-
-            auto posIter2 = std::find_if(
-                aaClusterGroupVertexPositions[iClusterGroup].begin(),
-                aaClusterGroupVertexPositions[iClusterGroup].end(),
-                [position2](float3 const& checkPosition)
-                {
-                    return (length(checkPosition - position2) <= kfEqualityThreshold);
-                });
-            assert(posIter2 != aaClusterGroupVertexPositions[iClusterGroup].end());
-            uint32_t iRemapPos2 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexPositions[iClusterGroup].begin(), posIter2));
-
-            // normal
-            uint32_t iOrigNormal0 = aaiClusterTriangleNormalIndices[iCluster][iTri];
-            uint32_t iOrigNormal1 = aaiClusterTriangleNormalIndices[iCluster][iTri + 1];
-            uint32_t iOrigNormal2 = aaiClusterTriangleNormalIndices[iCluster][iTri + 2];
-
-            float3 const& normal0 = aaClusterVertexNormals[iCluster][iOrigNormal0];
-            float3 const& normal1 = aaClusterVertexNormals[iCluster][iOrigNormal1];
-            float3 const& normal2 = aaClusterVertexNormals[iCluster][iOrigNormal2];
-
-            auto normalIter0 = std::find_if(
-                aaClusterGroupVertexNormals[iClusterGroup].begin(),
-                aaClusterGroupVertexNormals[iClusterGroup].end(),
-                [normal0](float3 const& checkNormal)
-                {
-                    return (length(checkNormal - normal0) <= kfEqualityThreshold);
-                });
-            assert(normalIter0 != aaClusterGroupVertexNormals[iClusterGroup].end());
-            uint32_t iRemapNormal0 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexNormals[iClusterGroup].begin(), normalIter0));
-
-            auto normalIter1 = std::find_if(
-                aaClusterGroupVertexNormals[iClusterGroup].begin(),
-                aaClusterGroupVertexNormals[iClusterGroup].end(),
-                [normal1](float3 const& checkNormal)
-                {
-                    return (length(checkNormal - normal1) <= kfEqualityThreshold);
-                });
-            assert(normalIter1 != aaClusterGroupVertexNormals[iClusterGroup].end());
-            uint32_t iRemapNormal1 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexNormals[iClusterGroup].begin(), normalIter1));
-
-            auto normalIter2 = std::find_if(
-                aaClusterGroupVertexNormals[iClusterGroup].begin(),
-                aaClusterGroupVertexNormals[iClusterGroup].end(),
-                [normal2](float3 const& checkNormal)
-                {
-                    return (length(checkNormal - normal2) <= kfEqualityThreshold);
-                });
-            assert(normalIter2 != aaClusterGroupVertexNormals[iClusterGroup].end());
-            uint32_t iRemapNormal2 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexNormals[iClusterGroup].begin(), normalIter2));
-            
-            // uv
-            uint32_t iOrigUV0 = aaiClusterTriangleUVIndices[iCluster][iTri];
-            uint32_t iOrigUV1 = aaiClusterTriangleUVIndices[iCluster][iTri + 1];
-            uint32_t iOrigUV2 = aaiClusterTriangleUVIndices[iCluster][iTri + 2];
-
-            float2 const& uv0 = aaClusterVertexUVs[iCluster][iOrigUV0];
-            float2 const& uv1 = aaClusterVertexUVs[iCluster][iOrigUV1];
-            float2 const& uv2 = aaClusterVertexUVs[iCluster][iOrigUV2];
-
-            auto uvIter0 = std::find_if(
-                aaClusterGroupVertexUVs[iClusterGroup].begin(),
-                aaClusterGroupVertexUVs[iClusterGroup].end(),
-                [uv0](float2 const& checkUV)
-                {
-                    return (length(checkUV - uv0) <= kfEqualityThreshold);
-                });
-            assert(uvIter0 != aaClusterGroupVertexUVs[iClusterGroup].end());
-            uint32_t iRemapUV0 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexUVs[iClusterGroup].begin(), uvIter0));
-
-            // uv
-            auto uvIter1 = std::find_if(
-                aaClusterGroupVertexUVs[iClusterGroup].begin(),
-                aaClusterGroupVertexUVs[iClusterGroup].end(),
-                [uv1](float2 const& checkUV)
-                {
-                    return (length(checkUV - uv1) <= kfEqualityThreshold);
-                });
-            assert(uvIter1 != aaClusterGroupVertexUVs[iClusterGroup].end());
-            uint32_t iRemapUV1 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexUVs[iClusterGroup].begin(), uvIter1));
-
-            auto uvIter2 = std::find_if(
-                aaClusterGroupVertexUVs[iClusterGroup].begin(),
-                aaClusterGroupVertexUVs[iClusterGroup].end(),
-                [uv2](float2 const& checkUV)
-                {
-                    return (length(checkUV - uv2) <= kfEqualityThreshold);
-                });
-            assert(uvIter2 != aaClusterGroupVertexUVs[iClusterGroup].end());
-            uint32_t iRemapUV2 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexUVs[iClusterGroup].begin(), uvIter2));
-
-            if(iRemapPos0 != iRemapPos1 && iRemapPos0 != iRemapPos2 && iRemapPos1 != iRemapPos2)
-            {
-                aaiClusterGroupTrianglePositionIndices[iClusterGroup].push_back(iRemapPos0);
-                aaiClusterGroupTrianglePositionIndices[iClusterGroup].push_back(iRemapPos1);
-                aaiClusterGroupTrianglePositionIndices[iClusterGroup].push_back(iRemapPos2);
-
-                aaiClusterGroupTriangleNormalIndices[iClusterGroup].push_back(iRemapNormal0);
-                aaiClusterGroupTriangleNormalIndices[iClusterGroup].push_back(iRemapNormal1);
-                aaiClusterGroupTriangleNormalIndices[iClusterGroup].push_back(iRemapNormal2);
-
-                aaiClusterGroupTriangleUVIndices[iClusterGroup].push_back(iRemapUV0);
-                aaiClusterGroupTriangleUVIndices[iClusterGroup].push_back(iRemapUV1);
-                aaiClusterGroupTriangleUVIndices[iClusterGroup].push_back(iRemapUV2);
-
-                //if(iClusterGroup == 1)
-                //{
-                //    DEBUG_PRINTF("cluster group %d add tri %d position remap (%d, %d, %d)\n", iClusterGroup, iTri, iRemap0, iRemap1, iRemap2);
-                //}
-            }
-            else
-            {
-                aiDiscardTris.push_back(iTri);
-            }
-            
-        }   // for tri in cluster
-
-    }   // for cluster = 0 to num clusters
-
-    //DEBUG_PRINTF("\n****\n");
-
-    // output cluster group obj
-    {
-        for(uint32_t iClusterGroup = 0; iClusterGroup < iNumClusterGroups; iClusterGroup++)
-        {
-            assert(aaiClusterGroupTrianglePositionIndices[iClusterGroup].size() == aaiClusterGroupTriangleNormalIndices[iClusterGroup].size());
-            assert(aaiClusterGroupTrianglePositionIndices[iClusterGroup].size() == aaiClusterGroupTriangleUVIndices[iClusterGroup].size());
-
-            std::ostringstream clusterGroupName;
-            clusterGroupName << "cluster-group-lod" << iLODLevel << "-group" << iClusterGroup;
-
-            std::ostringstream clusterGroupFilePath;
-            clusterGroupFilePath << homeDirectory << "cluster-groups\\" << meshModelName << "\\";
-            if(!std::filesystem::exists(clusterGroupFilePath.str()))
-            {
-                std::filesystem::create_directory(clusterGroupFilePath.str());
-            }
-
-            clusterGroupFilePath << clusterGroupName.str() << ".obj";
-            FILE* fp = fopen(clusterGroupFilePath.str().c_str(), "wb");
-            fprintf(fp, "o %s\n", clusterGroupName.str().c_str());
-            fprintf(fp, "usemtl %s\n", clusterGroupName.str().c_str());
-            for(uint32_t iV = 0; iV < static_cast<uint32_t>(aaClusterGroupVertexPositions[iClusterGroup].size()); iV++)
-            {
-                fprintf(fp, "v %.4f %.4f %.4f\n",
-                    aaClusterGroupVertexPositions[iClusterGroup][iV].x,
-                    aaClusterGroupVertexPositions[iClusterGroup][iV].y,
-                    aaClusterGroupVertexPositions[iClusterGroup][iV].z);
-            }
-
-            for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aaiClusterGroupTrianglePositionIndices[iClusterGroup].size()); iTri += 3)
-            {
-                fprintf(fp, "f %d// %d// %d//\n",
-                    aaiClusterGroupTrianglePositionIndices[iClusterGroup][iTri] + 1,
-                    aaiClusterGroupTrianglePositionIndices[iClusterGroup][iTri + 1] + 1,
-                    aaiClusterGroupTrianglePositionIndices[iClusterGroup][iTri + 2] + 1);
-            }
-            fclose(fp);
-
-            float fRand0 = float(rand() % 255) / 255.0f;
-            float fRand1 = float(rand() % 255) / 255.0f;
-            float fRand2 = float(rand() % 255) / 255.0f;
-            std::ostringstream clusterGroupMaterialFilePath;
-            clusterGroupMaterialFilePath << homeDirectory << "cluster-groups\\" << meshModelName << "\\";
-            clusterGroupMaterialFilePath << clusterGroupName.str() << ".mtl";
-            fp = fopen(clusterGroupMaterialFilePath.str().c_str(), "wb");
-            fprintf(fp, "newmtl %s\n", clusterGroupName.str().c_str());
-            fprintf(fp, "Kd %.4f %.4f %.4f\n",
-                fRand0,
-                fRand1,
-                fRand2);
-            fclose(fp);
-
-        }   // for cluster group = 0 to num cluster groups
-
-    }   // output obj files for cluster groups
-}
-
-
-
-
+    std::string const& meshModelName);
 
 /*
 **
 */
-int main(char* argv[], int argc)
+int main(int argc, char* argv[])
 {
     float result = 0.0f;
 
@@ -419,6 +118,7 @@ int main(char* argv[], int argc)
     std::string homeDirectory = getenv("HOME");
     homeDirectory += "\\demo-models\\";
 
+    std::string objMeshModelName = argv[1];
 
     // load initial mesh file
     //std::string fullOBJFilePath = homeDirectory + "face-meshlet-test.obj";
@@ -427,7 +127,8 @@ int main(char* argv[], int argc)
     //std::string fullOBJFilePath = homeDirectory + "ritual-bell-trimmed.obj";
     //std::string fullOBJFilePath = homeDirectory + "dragon.obj";
     //std::string fullOBJFilePath = homeDirectory + "dragon-trimmed.obj";
-    std::string fullOBJFilePath = homeDirectory + "guan-yu-full.obj";
+    //std::string fullOBJFilePath = homeDirectory + "guan-yu-full.obj";
+    std::string fullOBJFilePath = homeDirectory + objMeshModelName;
     std::string warnings;
     std::string errors;
     bool bRet = tinyobj::LoadObj(
@@ -2665,6 +2366,322 @@ DEBUG_PRINTF("\n************\n\ntook total %lld seconds for lod %d\n\n**********
     return 0;
 }
 
+/*
+**
+*/
+void buildClusterGroups(
+    std::vector<std::vector<float3>>& aaClusterGroupVertexPositions,
+    std::vector<std::vector<float3>>& aaClusterGroupVertexNormals,
+    std::vector<std::vector<float2>>& aaClusterGroupVertexUVs,
+    std::vector<std::vector<uint32_t>>& aaiClusterGroupTrianglePositionIndices,
+    std::vector<std::vector<uint32_t>>& aaiClusterGroupTriangleNormalIndices,
+    std::vector<std::vector<uint32_t>>& aaiClusterGroupTriangleUVIndices,
+    std::vector<uint32_t>& aiClusterGroupMap,
+    std::vector<std::vector<float3>> const& aaClusterVertexPositions,
+    std::vector<std::vector<float3>> const& aaClusterVertexNormals,
+    std::vector<std::vector<float2>> const& aaClusterVertexUVs,
+    std::vector<std::vector<uint32_t>> const& aaiClusterTrianglePositionIndices,
+    std::vector<std::vector<uint32_t>> const& aaiClusterTriangleNormalIndices,
+    std::vector<std::vector<uint32_t>> const& aaiClusterTriangleUVIndices,
+    uint32_t iNumClusterGroups,
+    uint32_t iNumClusters,
+    uint32_t iLODLevel,
+    std::string const& meshClusterOutputName,
+    std::string const& homeDirectory,
+    std::string const& meshModelName)
+{
+    for(uint32_t iCluster = 0; iCluster < static_cast<uint32_t>(aaClusterVertexPositions.size()); iCluster++)
+    {
+        assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleNormalIndices[iCluster].size());
+        assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleUVIndices[iCluster].size());
+    }
 
+    aaClusterGroupVertexPositions.resize(iNumClusterGroups);
+    aaiClusterGroupTrianglePositionIndices.resize(iNumClusterGroups);
+
+    aaClusterGroupVertexNormals.resize(iNumClusterGroups);
+    aaiClusterGroupTriangleNormalIndices.resize(iNumClusterGroups);
+
+    aaClusterGroupVertexUVs.resize(iNumClusterGroups);
+    aaiClusterGroupTriangleUVIndices.resize(iNumClusterGroups);
+
+    aiClusterGroupMap.resize(iNumClusters);
+
+    // group clusters
+    if(iNumClusterGroups > 1)
+    {
+        // place clusters into the groups specified by metis
+        std::ostringstream clusterGroupPartitionFilePath;
+        clusterGroupPartitionFilePath << meshClusterOutputName << ".part.";
+        clusterGroupPartitionFilePath << iNumClusterGroups;
+
+        std::vector<uint32_t> aiClusterGroups;
+        readMetisClusterFile(aiClusterGroups, clusterGroupPartitionFilePath.str());
+
+        assert(aiClusterGroups.size() == aaClusterVertexPositions.size());
+        for(uint32_t iCluster = 0; iCluster < static_cast<uint32_t>(aaClusterVertexPositions.size()); iCluster++)
+        {
+            uint32_t iClusterGroup = aiClusterGroups[iCluster];
+
+            aaClusterGroupVertexPositions[iClusterGroup].insert(
+                aaClusterGroupVertexPositions[iClusterGroup].end(),
+                aaClusterVertexPositions[iCluster].begin(),
+                aaClusterVertexPositions[iCluster].end());
+
+            aaClusterGroupVertexNormals[iClusterGroup].insert(
+                aaClusterGroupVertexNormals[iClusterGroup].end(),
+                aaClusterVertexNormals[iCluster].begin(),
+                aaClusterVertexNormals[iCluster].end());
+
+            aaClusterGroupVertexUVs[iClusterGroup].insert(
+                aaClusterGroupVertexUVs[iClusterGroup].end(),
+                aaClusterVertexUVs[iCluster].begin(),
+                aaClusterVertexUVs[iCluster].end());
+
+            aiClusterGroupMap[iCluster] = iClusterGroup;
+        }
+    }
+    else
+    {
+        for(uint32_t iCluster = 0; iCluster < iNumClusters; iCluster++)
+        {
+            aaClusterGroupVertexPositions[0].insert(
+                aaClusterGroupVertexPositions[0].end(),
+                aaClusterVertexPositions[iCluster].begin(),
+                aaClusterVertexPositions[iCluster].end());
+
+            aaClusterGroupVertexNormals[0].insert(
+                aaClusterGroupVertexNormals[0].end(),
+                aaClusterVertexNormals[iCluster].begin(),
+                aaClusterVertexNormals[iCluster].end());
+
+            aaClusterGroupVertexUVs[0].insert(
+                aaClusterGroupVertexUVs[0].end(),
+                aaClusterVertexUVs[iCluster].begin(),
+                aaClusterVertexUVs[iCluster].end());
+
+            aiClusterGroupMap[iCluster] = 0;
+        }
+    }
+
+    for(uint32_t iCluster = 0; iCluster < static_cast<uint32_t>(aaClusterVertexPositions.size()); iCluster++)
+    {
+        assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleNormalIndices[iCluster].size());
+        assert(aaiClusterTrianglePositionIndices[iCluster].size() == aaiClusterTriangleUVIndices[iCluster].size());
+    }
+
+    static float const kfEqualityThreshold = 1.0e-8f;
+
+    // POSITIONS: remap cluster triangle indices into cluster group's own indices
+    std::vector<uint32_t> aiDiscardTris;
+    for(uint32_t iCluster = 0; iCluster < static_cast<uint32_t>(aaClusterVertexPositions.size()); iCluster++)
+    {
+        uint32_t iClusterGroup = aiClusterGroupMap[iCluster];
+        for(int32_t iTri = 0; iTri < static_cast<int32_t>(aaiClusterTrianglePositionIndices[iCluster].size()); iTri += 3)
+        {
+            // position
+            uint32_t iOrigPos0 = aaiClusterTrianglePositionIndices[iCluster][iTri];
+            uint32_t iOrigPos1 = aaiClusterTrianglePositionIndices[iCluster][iTri + 1];
+            uint32_t iOrigPos2 = aaiClusterTrianglePositionIndices[iCluster][iTri + 2];
+
+            float3 const& position0 = aaClusterVertexPositions[iCluster][iOrigPos0];
+            float3 const& position1 = aaClusterVertexPositions[iCluster][iOrigPos1];
+            float3 const& position2 = aaClusterVertexPositions[iCluster][iOrigPos2];
+
+            auto posIter0 = std::find_if(
+                aaClusterGroupVertexPositions[iClusterGroup].begin(),
+                aaClusterGroupVertexPositions[iClusterGroup].end(),
+                [position0](float3 const& checkPosition)
+                {
+                    return (length(checkPosition - position0) <= kfEqualityThreshold);
+                });
+            assert(posIter0 != aaClusterGroupVertexPositions[iClusterGroup].end());
+            uint32_t iRemapPos0 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexPositions[iClusterGroup].begin(), posIter0));
+
+            auto posIter1 = std::find_if(
+                aaClusterGroupVertexPositions[iClusterGroup].begin(),
+                aaClusterGroupVertexPositions[iClusterGroup].end(),
+                [position1](float3 const& checkPosition)
+                {
+                    return (length(checkPosition - position1) <= kfEqualityThreshold);
+                });
+            assert(posIter1 != aaClusterGroupVertexPositions[iClusterGroup].end());
+            uint32_t iRemapPos1 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexPositions[iClusterGroup].begin(), posIter1));
+
+            auto posIter2 = std::find_if(
+                aaClusterGroupVertexPositions[iClusterGroup].begin(),
+                aaClusterGroupVertexPositions[iClusterGroup].end(),
+                [position2](float3 const& checkPosition)
+                {
+                    return (length(checkPosition - position2) <= kfEqualityThreshold);
+                });
+            assert(posIter2 != aaClusterGroupVertexPositions[iClusterGroup].end());
+            uint32_t iRemapPos2 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexPositions[iClusterGroup].begin(), posIter2));
+
+            // normal
+            uint32_t iOrigNormal0 = aaiClusterTriangleNormalIndices[iCluster][iTri];
+            uint32_t iOrigNormal1 = aaiClusterTriangleNormalIndices[iCluster][iTri + 1];
+            uint32_t iOrigNormal2 = aaiClusterTriangleNormalIndices[iCluster][iTri + 2];
+
+            float3 const& normal0 = aaClusterVertexNormals[iCluster][iOrigNormal0];
+            float3 const& normal1 = aaClusterVertexNormals[iCluster][iOrigNormal1];
+            float3 const& normal2 = aaClusterVertexNormals[iCluster][iOrigNormal2];
+
+            auto normalIter0 = std::find_if(
+                aaClusterGroupVertexNormals[iClusterGroup].begin(),
+                aaClusterGroupVertexNormals[iClusterGroup].end(),
+                [normal0](float3 const& checkNormal)
+                {
+                    return (length(checkNormal - normal0) <= kfEqualityThreshold);
+                });
+            assert(normalIter0 != aaClusterGroupVertexNormals[iClusterGroup].end());
+            uint32_t iRemapNormal0 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexNormals[iClusterGroup].begin(), normalIter0));
+
+            auto normalIter1 = std::find_if(
+                aaClusterGroupVertexNormals[iClusterGroup].begin(),
+                aaClusterGroupVertexNormals[iClusterGroup].end(),
+                [normal1](float3 const& checkNormal)
+                {
+                    return (length(checkNormal - normal1) <= kfEqualityThreshold);
+                });
+            assert(normalIter1 != aaClusterGroupVertexNormals[iClusterGroup].end());
+            uint32_t iRemapNormal1 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexNormals[iClusterGroup].begin(), normalIter1));
+
+            auto normalIter2 = std::find_if(
+                aaClusterGroupVertexNormals[iClusterGroup].begin(),
+                aaClusterGroupVertexNormals[iClusterGroup].end(),
+                [normal2](float3 const& checkNormal)
+                {
+                    return (length(checkNormal - normal2) <= kfEqualityThreshold);
+                });
+            assert(normalIter2 != aaClusterGroupVertexNormals[iClusterGroup].end());
+            uint32_t iRemapNormal2 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexNormals[iClusterGroup].begin(), normalIter2));
+
+            // uv
+            uint32_t iOrigUV0 = aaiClusterTriangleUVIndices[iCluster][iTri];
+            uint32_t iOrigUV1 = aaiClusterTriangleUVIndices[iCluster][iTri + 1];
+            uint32_t iOrigUV2 = aaiClusterTriangleUVIndices[iCluster][iTri + 2];
+
+            float2 const& uv0 = aaClusterVertexUVs[iCluster][iOrigUV0];
+            float2 const& uv1 = aaClusterVertexUVs[iCluster][iOrigUV1];
+            float2 const& uv2 = aaClusterVertexUVs[iCluster][iOrigUV2];
+
+            auto uvIter0 = std::find_if(
+                aaClusterGroupVertexUVs[iClusterGroup].begin(),
+                aaClusterGroupVertexUVs[iClusterGroup].end(),
+                [uv0](float2 const& checkUV)
+                {
+                    return (length(checkUV - uv0) <= kfEqualityThreshold);
+                });
+            assert(uvIter0 != aaClusterGroupVertexUVs[iClusterGroup].end());
+            uint32_t iRemapUV0 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexUVs[iClusterGroup].begin(), uvIter0));
+
+            // uv
+            auto uvIter1 = std::find_if(
+                aaClusterGroupVertexUVs[iClusterGroup].begin(),
+                aaClusterGroupVertexUVs[iClusterGroup].end(),
+                [uv1](float2 const& checkUV)
+                {
+                    return (length(checkUV - uv1) <= kfEqualityThreshold);
+                });
+            assert(uvIter1 != aaClusterGroupVertexUVs[iClusterGroup].end());
+            uint32_t iRemapUV1 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexUVs[iClusterGroup].begin(), uvIter1));
+
+            auto uvIter2 = std::find_if(
+                aaClusterGroupVertexUVs[iClusterGroup].begin(),
+                aaClusterGroupVertexUVs[iClusterGroup].end(),
+                [uv2](float2 const& checkUV)
+                {
+                    return (length(checkUV - uv2) <= kfEqualityThreshold);
+                });
+            assert(uvIter2 != aaClusterGroupVertexUVs[iClusterGroup].end());
+            uint32_t iRemapUV2 = static_cast<uint32_t>(std::distance(aaClusterGroupVertexUVs[iClusterGroup].begin(), uvIter2));
+
+            if(iRemapPos0 != iRemapPos1 && iRemapPos0 != iRemapPos2 && iRemapPos1 != iRemapPos2)
+            {
+                aaiClusterGroupTrianglePositionIndices[iClusterGroup].push_back(iRemapPos0);
+                aaiClusterGroupTrianglePositionIndices[iClusterGroup].push_back(iRemapPos1);
+                aaiClusterGroupTrianglePositionIndices[iClusterGroup].push_back(iRemapPos2);
+
+                aaiClusterGroupTriangleNormalIndices[iClusterGroup].push_back(iRemapNormal0);
+                aaiClusterGroupTriangleNormalIndices[iClusterGroup].push_back(iRemapNormal1);
+                aaiClusterGroupTriangleNormalIndices[iClusterGroup].push_back(iRemapNormal2);
+
+                aaiClusterGroupTriangleUVIndices[iClusterGroup].push_back(iRemapUV0);
+                aaiClusterGroupTriangleUVIndices[iClusterGroup].push_back(iRemapUV1);
+                aaiClusterGroupTriangleUVIndices[iClusterGroup].push_back(iRemapUV2);
+
+                //if(iClusterGroup == 1)
+                //{
+                //    DEBUG_PRINTF("cluster group %d add tri %d position remap (%d, %d, %d)\n", iClusterGroup, iTri, iRemap0, iRemap1, iRemap2);
+                //}
+            }
+            else
+            {
+                aiDiscardTris.push_back(iTri);
+            }
+
+        }   // for tri in cluster
+
+    }   // for cluster = 0 to num clusters
+
+    //DEBUG_PRINTF("\n****\n");
+
+    // output cluster group obj
+    {
+        for(uint32_t iClusterGroup = 0; iClusterGroup < iNumClusterGroups; iClusterGroup++)
+        {
+            assert(aaiClusterGroupTrianglePositionIndices[iClusterGroup].size() == aaiClusterGroupTriangleNormalIndices[iClusterGroup].size());
+            assert(aaiClusterGroupTrianglePositionIndices[iClusterGroup].size() == aaiClusterGroupTriangleUVIndices[iClusterGroup].size());
+
+            std::ostringstream clusterGroupName;
+            clusterGroupName << "cluster-group-lod" << iLODLevel << "-group" << iClusterGroup;
+
+            std::ostringstream clusterGroupFilePath;
+            clusterGroupFilePath << homeDirectory << "cluster-groups\\" << meshModelName << "\\";
+            if(!std::filesystem::exists(clusterGroupFilePath.str()))
+            {
+                std::filesystem::create_directory(clusterGroupFilePath.str());
+            }
+
+            clusterGroupFilePath << clusterGroupName.str() << ".obj";
+            FILE* fp = fopen(clusterGroupFilePath.str().c_str(), "wb");
+            fprintf(fp, "o %s\n", clusterGroupName.str().c_str());
+            fprintf(fp, "usemtl %s\n", clusterGroupName.str().c_str());
+            for(uint32_t iV = 0; iV < static_cast<uint32_t>(aaClusterGroupVertexPositions[iClusterGroup].size()); iV++)
+            {
+                fprintf(fp, "v %.4f %.4f %.4f\n",
+                    aaClusterGroupVertexPositions[iClusterGroup][iV].x,
+                    aaClusterGroupVertexPositions[iClusterGroup][iV].y,
+                    aaClusterGroupVertexPositions[iClusterGroup][iV].z);
+            }
+
+            for(uint32_t iTri = 0; iTri < static_cast<uint32_t>(aaiClusterGroupTrianglePositionIndices[iClusterGroup].size()); iTri += 3)
+            {
+                fprintf(fp, "f %d// %d// %d//\n",
+                    aaiClusterGroupTrianglePositionIndices[iClusterGroup][iTri] + 1,
+                    aaiClusterGroupTrianglePositionIndices[iClusterGroup][iTri + 1] + 1,
+                    aaiClusterGroupTrianglePositionIndices[iClusterGroup][iTri + 2] + 1);
+            }
+            fclose(fp);
+
+            float fRand0 = float(rand() % 255) / 255.0f;
+            float fRand1 = float(rand() % 255) / 255.0f;
+            float fRand2 = float(rand() % 255) / 255.0f;
+            std::ostringstream clusterGroupMaterialFilePath;
+            clusterGroupMaterialFilePath << homeDirectory << "cluster-groups\\" << meshModelName << "\\";
+            clusterGroupMaterialFilePath << clusterGroupName.str() << ".mtl";
+            fp = fopen(clusterGroupMaterialFilePath.str().c_str(), "wb");
+            fprintf(fp, "newmtl %s\n", clusterGroupName.str().c_str());
+            fprintf(fp, "Kd %.4f %.4f %.4f\n",
+                fRand0,
+                fRand1,
+                fRand2);
+            fclose(fp);
+
+        }   // for cluster group = 0 to num cluster groups
+
+    }   // output obj files for cluster groups
+}
 
 
